@@ -1,0 +1,4 @@
+(melange.emit
+ (target output)
+ (alias melange)
+ (module_systems es6))
