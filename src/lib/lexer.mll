@@ -1,4 +1,6 @@
 {
+  open Parser
+
   exception Lexer_error of string * Lexing.position
 }
 
@@ -9,16 +11,16 @@ let float_lit = digit+ ('.' digit*)? | '.' digit+
 
 rule token = parse
   | [' ' '\t']    { token lexbuf }
-  | float_lit     { Token.FLOAT (float_of_string (Lexing.lexeme lexbuf)) }
-  | ident         { Token.IDENT (Lexing.lexeme lexbuf) }
-  | '+'           { Token.PLUS }
-  | '-'           { Token.MINUS }
-  | '*'           { Token.STAR }
-  | '/'           { Token.SLASH }
-  | '('           { Token.LPAREN }
-  | ')'           { Token.RPAREN }
-  | '='           { Token.EQUALS }
-  | eof           { Token.EOF }
+  | float_lit     { FLOAT (float_of_string (Lexing.lexeme lexbuf)) }
+  | ident         { IDENT (Lexing.lexeme lexbuf) }
+  | '+'           { PLUS }
+  | '-'           { MINUS }
+  | '*'           { STAR }
+  | '/'           { SLASH }
+  | '('           { LPAREN }
+  | ')'           { RPAREN }
+  | '='           { EQUALS }
+  | eof           { EOF }
   | _ as c        { raise (Lexer_error (
                       Printf.sprintf "Unexpected character: '%c'" c,
                       lexbuf.Lexing.lex_curr_p)) }

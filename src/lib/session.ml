@@ -40,7 +40,7 @@ let make_error (msg : string) (col : int) : result_obj =
 let eval_input (env : Eval.env ref) (input_str : string) : result_obj =
   let lexbuf = Lexing.from_string input_str in
   try
-    let stmt = Parser.parse_input lexbuf in
+    let stmt = Parser.input Lexer.token lexbuf in
     match Eval.eval_statement !env stmt with
     | Ok (new_env, Eval.ExprResult v) ->
       env := new_env;
@@ -53,8 +53,9 @@ let eval_input (env : Eval.env ref) (input_str : string) : result_obj =
   with
   | Lexer.Lexer_error (msg, pos) ->
     make_error msg pos.Lexing.pos_cnum
-  | Parser.Parse_error (msg, col) ->
-    make_error msg col
+  | Parser.Error ->
+    let pos = lexbuf.Lexing.lex_curr_p in
+    make_error "Syntax error" pos.Lexing.pos_cnum
 
 let create_session () =
   let env = ref Eval.StringMap.empty in
