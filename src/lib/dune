@@ -3,4 +3,9 @@
  (modes melange)
  (preprocess (pps melange.ppx)))
 
+(rule
+ (targets parser.ml parser.mli)
+ (deps parser.mly)
+ (action (run %{bin:menhir} --code %{deps})))
+
 (ocamllex lexer)
