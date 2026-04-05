@@ -1,0 +1,6 @@
+(library
+ (name calc_core)
+ (modes melange)
+ (preprocess (pps melange.ppx)))
+
+(ocamllex lexer)

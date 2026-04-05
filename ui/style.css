@@ -1,0 +1,82 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #1e1e2e;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 14px;
+  color: #cdd6f4;
+  padding: 20px;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+
+#terminal {
+  width: 100%;
+  max-width: 800px;
+  background: #11111b;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 40px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+#output {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+#output div {
+  margin: 1px 0;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.prompt {
+  color: #a6e3a1;
+  font-weight: bold;
+}
+
+.input-echo {
+  color: #cdd6f4;
+}
+
+.result {
+  color: #89b4fa;
+}
+
+.binding {
+  color: #f9e2af;
+}
+
+.error {
+  color: #f38ba8;
+}
+
+.caret {
+  color: #f38ba8;
+}
+
+#input-line {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid #313244;
+  padding-top: 8px;
+}
+
+#input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #cdd6f4;
+  font: inherit;
+  outline: none;
+  caret-color: #a6e3a1;
+}

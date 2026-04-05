@@ -3,3 +3,4 @@ _opam/
 .merlin
 *.install
 .direnv/
+node_modules/
