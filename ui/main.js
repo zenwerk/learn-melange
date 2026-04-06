@@ -3,6 +3,7 @@ import { create_session } from 'melange-output/src/main.js';
 const session = create_session();
 const outputEl = document.getElementById('output');
 const inputEl = document.getElementById('input');
+const hintsEl = document.getElementById('hints');
 
 const history = [];
 let historyIndex = -1;
@@ -45,6 +46,24 @@ function formatResult(result, inputText) {
   }
 }
 
+function updateHints() {
+  const text = inputEl.value;
+  const tokens = session.hints(text);
+  if (tokens.length === 0) {
+    hintsEl.innerHTML = '';
+    return;
+  }
+  const tokenHtml = tokens
+    .map(t => `<span class="hint-token">${escapeHtml(t)}</span>`)
+    .join('');
+  hintsEl.innerHTML = `<span class="hint-label">next:</span>${tokenHtml}`;
+}
+
+inputEl.addEventListener('input', updateHints);
+
+// Show initial hints on load
+updateHints();
+
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const text = inputEl.value.trim();
@@ -60,6 +79,7 @@ inputEl.addEventListener('keydown', (e) => {
     appendLine(formatResult(result, text));
 
     inputEl.value = '';
+    updateHints();
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     if (history.length === 0) return;

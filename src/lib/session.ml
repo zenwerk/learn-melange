@@ -68,6 +68,49 @@ let rec push_parse lexbuf (checkpoint : Ast.statement I.checkpoint) : (Ast.state
   | I.Shifting _ | I.AboutToReduce _ ->
     push_parse lexbuf (drain checkpoint)
 
+(* All token representatives with human-readable labels for hint display. *)
+let all_tokens : (Parser.token * string) list = [
+  (Parser.FLOAT 0.0, "number");
+  (Parser.IDENT "", "identifier");
+  (Parser.PLUS, "+");
+  (Parser.MINUS, "-");
+  (Parser.STAR, "*");
+  (Parser.SLASH, "/");
+  (Parser.LPAREN, "(");
+  (Parser.RPAREN, ")");
+  (Parser.EQUALS, "=");
+  (Parser.EOF, "EOF");
+]
+
+(* Parse input as far as possible and return the set of acceptable next tokens. *)
+let get_acceptable_tokens (input_str : string) : string list =
+  let lexbuf = Lexing.from_string input_str in
+  let checkpoint = Parser.Incremental.input lexbuf.Lexing.lex_curr_p in
+  let rec feed cp =
+    match cp with
+    | I.InputNeeded _ ->
+      (try
+         let token = Lexer.token lexbuf in
+         if token = Parser.EOF then
+           collect_hints cp
+         else
+           let startp = lexbuf.Lexing.lex_start_p in
+           let endp = lexbuf.Lexing.lex_curr_p in
+           let cp' = I.offer cp (token, startp, endp) in
+           feed (drain cp')
+       with
+       | Lexer.Lexer_error _ -> [])
+    | I.Accepted _ -> []
+    | I.HandlingError _ | I.Rejected -> []
+    | I.Shifting _ | I.AboutToReduce _ -> feed (drain cp)
+  and collect_hints cp =
+    let pos = lexbuf.Lexing.lex_curr_p in
+    List.filter_map (fun (tok, label) ->
+      if I.acceptable cp tok pos then Some label else None
+    ) all_tokens
+  in
+  feed (drain checkpoint)
+
 let eval_input (env : Eval.env ref) (input_str : string) : result_obj =
   let lexbuf = Lexing.from_string input_str in
   let checkpoint = Parser.Incremental.input lexbuf.Lexing.lex_curr_p in
@@ -88,10 +131,14 @@ let eval_input (env : Eval.env ref) (input_str : string) : result_obj =
 let create_session () =
   let env = ref Eval.StringMap.empty in
   [%mel.obj {
-    eval = fun (input : string) ->
+    eval = (fun (input : string) ->
       let input_str = String.trim input in
       if input_str = "" then
         make_error "Empty input" 0
       else
-        eval_input env input_str
+        eval_input env input_str);
+    hints = (fun (input : string) ->
+      let input_str = String.trim input in
+      get_acceptable_tokens input_str
+      |> Array.of_list)
   }]
