@@ -1,11 +1,12 @@
 (library
  (name calc_core)
  (modes melange)
+ (libraries menhirLib)
  (preprocess (pps melange.ppx)))
 
 (rule
  (targets parser.ml parser.mli)
  (deps parser.mly)
- (action (run %{bin:menhir} --code %{deps})))
+ (action (run %{bin:menhir} --table %{deps})))
 
 (ocamllex lexer)
