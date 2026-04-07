@@ -4,9 +4,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { LocalEchoAddon } from '@gytx/xterm-local-echo';
 import '@xterm/xterm/css/xterm.css';
 
-// ---------------------------------------------------------------------------
-// 配色: Catppuccin Mocha を xterm theme に対応付け。既存デザインとの連続性。
-// ---------------------------------------------------------------------------
 const THEME = Object.freeze({
   background: '#11111b',
   foreground: '#cdd6f4',
@@ -31,9 +28,6 @@ const THEME = Object.freeze({
   brightWhite: '#a6adc8',
 });
 
-// ---------------------------------------------------------------------------
-// ANSI エスケープユーティリティ
-// ---------------------------------------------------------------------------
 const ESC = '\x1b';
 const CSI = `${ESC}[`;
 
@@ -48,13 +42,12 @@ const Ansi = Object.freeze({
   dim: sgr('2'),
 });
 
-// ---------------------------------------------------------------------------
-// LocalEcho 拡張: readline 風 (Emacs) キーバインドと、ちらつき防止のための
-// 差分更新パッチ。@gytx/xterm-local-echo は C-a/C-e/C-b/C-f/C-k/C-u/C-w を
-// サポートしないため、handleTermData を差し替えて翻訳する。
-// 加えて挿入/削除/setInput を ICH/DCH/EL ベースの差分更新に置き換え、
-// clearInput → 全行再描画によるちらつきを根絶する。
-// ---------------------------------------------------------------------------
+// @gytx/xterm-local-echo は readline 風 Emacs キーバインドを持たない。また
+// 編集のたびに clearInput → 全行再描画するためちらつく。このクラスは
+// (1) handleTermData を差し替えて C-a 等を翻訳し
+// (2) 挿入/削除/setInput を ICH/DCH/EL ベースの差分更新に置き換える。
+// 副作用としてライブラリの非公開フィールド (input/cursor/activePrompt) と
+// 非公開メソッドに依存している。アップグレード時は要再検証。
 class LocalEchoEnhancer {
   #term;
   #echo;
@@ -72,60 +65,56 @@ class LocalEchoEnhancer {
     this.#install();
   }
 
-  // ----- 公開状態へのアクセサ（local-echo の private を読み書きする） -----
-  get #input() { return this.#echo.input; }
-  set #input(v) { this.#echo.input = v; }
-  get #cursor() { return this.#echo.cursor; }
-  set #cursor(v) { this.#echo.cursor = v; }
-  get #promptLen() { return this.#echo.activePrompt?.prompt?.length ?? 0; }
-
-  // 折り返しが起こりうる場合のみ true。差分更新パッチは折り返し非対応のため
-  // この場合は元の (再描画ベースの) 実装にフォールバックする。
-  #wouldWrap(extra = 0) {
-    return this.#promptLen + this.#input.length + extra >= this.#term.cols;
+  #promptLen() {
+    return this.#echo.activePrompt?.prompt?.length ?? 0;
   }
 
-  // ----- 編集プリミティブ -----
+  // 差分更新パッチは行折り返しに対応していない。プロンプト+入力が cols を
+  // 超えうる場合のみ true を返し、呼び出し側は元実装にフォールバックする。
+  #wouldWrap(extra = 0) {
+    return this.#promptLen() + this.#echo.input.length + extra >= this.#term.cols;
+  }
 
-  // 行内容を newInput に置き換え、カーソルを newCursor 列へ移す（差分更新）。
+  // 共通プリミティブ: 行を空にして next を書き込み、カーソルを末尾に置く。
+  // 呼び出し側で必要なら追加で left 移動シーケンスを書く。
+  #writeLineBody(next) {
+    this.#term.write(`\r${CSI}${this.#promptLen() + 1}G${CSI}K${next}`);
+    this.#echo.input = next;
+    this.#echo.cursor = next.length;
+  }
+
+  // 行内容を next に置き換え、カーソルを newCursor 列に配置する。
   #rewriteLine(next, newCursor) {
-    if (this.#wouldWrap(Math.max(0, next.length - this.#input.length))) {
+    if (this.#wouldWrap(Math.max(0, next.length - this.#echo.input.length))) {
       this.#echo.clearInput();
-      this.#cursor = newCursor;
+      this.#echo.cursor = newCursor;
       this.#orig.setInput(next, false);
       return;
     }
+    this.#writeLineBody(next);
     const back = next.length - newCursor;
-    const moveBack = back > 0 ? `${CSI}${back}D` : '';
-    // 行頭→プロンプト直後→行末まで消去→新内容→末尾からカーソル位置へ戻る
-    this.#term.write(`\r${CSI}${this.#promptLen + 1}G${CSI}K${next}${moveBack}`);
-    this.#input = next;
-    this.#cursor = newCursor;
+    if (back > 0) this.#term.write(`${CSI}${back}D`);
+    this.#echo.cursor = newCursor;
   }
 
-  // C-w: カーソル左の連続空白 + 直前単語を削除
   #killPrevWord() {
-    const i = this.#cursor;
-    const s = this.#input;
+    const i = this.#echo.cursor;
+    const s = this.#echo.input;
     let j = i;
     while (j > 0 && /\s/.test(s[j - 1])) j--;
     while (j > 0 && !/\s/.test(s[j - 1])) j--;
     this.#rewriteLine(s.slice(0, j) + s.slice(i), j);
   }
 
-  // C-k: カーソル位置から行末まで削除
   #killToEnd() {
-    const i = this.#cursor;
-    this.#rewriteLine(this.#input.slice(0, i), i);
+    const i = this.#echo.cursor;
+    this.#rewriteLine(this.#echo.input.slice(0, i), i);
   }
 
-  // C-u: 行頭からカーソル位置まで削除
   #killToHead() {
-    const i = this.#cursor;
-    this.#rewriteLine(this.#input.slice(i), 0);
+    this.#rewriteLine(this.#echo.input.slice(this.#echo.cursor), 0);
   }
 
-  // ----- キー翻訳テーブル -----
   // 制御文字 → local-echo が解釈できるシーケンス、または内部メソッド呼び出し
   #ctrlMap = new Map([
     [0x01, () => this.#orig.handleTermData(`${CSI}H`)], // C-a → Home
@@ -133,17 +122,13 @@ class LocalEchoEnhancer {
     [0x02, () => this.#orig.handleTermData(`${CSI}D`)], // C-b → Left
     [0x06, () => this.#orig.handleTermData(`${CSI}C`)], // C-f → Right
     [0x08, () => this.#orig.handleTermData('\x7f')],    // C-h → Backspace
-    [0x10, () => this.#orig.handleTermData(`${CSI}A`)], // C-p → Up (history prev)
-    [0x0e, () => this.#orig.handleTermData(`${CSI}B`)], // C-n → Down (history next)
+    [0x10, () => this.#orig.handleTermData(`${CSI}A`)], // C-p → Up
+    [0x0e, () => this.#orig.handleTermData(`${CSI}B`)], // C-n → Down
     [0x0b, () => this.#killToEnd()],                    // C-k
     [0x15, () => this.#killToHead()],                   // C-u
     [0x17, () => this.#killPrevWord()],                 // C-w
   ]);
 
-  // 入力ストリームを走査して翻訳。3 種類のセグメントに分けて処理する:
-  //   1. ESC で始まる連続列 (矢印など) → そのまま元ハンドラへ
-  //   2. 制御文字 → 1 文字ずつテーブル参照
-  //   3. 通常文字 → 連続部分をまとめて元ハンドラへ
   #dispatch = (data) => {
     let i = 0;
     while (i < data.length) {
@@ -160,7 +145,7 @@ class LocalEchoEnhancer {
       if (code < 0x20 || code === 0x7f) {
         const action = this.#ctrlMap.get(code);
         if (action) action();
-        else this.#orig.handleTermData(data[i]); // \r, \t, C-c, C-d 等
+        else this.#orig.handleTermData(data[i]);
         i++;
         continue;
       }
@@ -176,54 +161,44 @@ class LocalEchoEnhancer {
     }
   };
 
-  // ----- 差分更新オーバーライド -----
-
   #handleCursorInsert = (text) => {
     if (this.#wouldWrap(text.length)) return this.#orig.handleCursorInsert(text);
 
-    const i = this.#cursor;
-    const before = this.#input.slice(0, i);
-    const after = this.#input.slice(i);
-    this.#input = before + text + after;
-    this.#cursor = i + text.length;
+    const i = this.#echo.cursor;
+    const after = this.#echo.input.slice(i);
+    this.#echo.input = this.#echo.input.slice(0, i) + text + after;
+    this.#echo.cursor = i + text.length;
 
-    if (after.length === 0) {
-      // 末尾追加
-      this.#term.write(text);
-    } else {
-      // 中間挿入: ICH (CSI n @) で空きを作って書き込む
-      this.#term.write(`${CSI}${text.length}@${text}`);
-    }
+    // 中間挿入は ICH (CSI n @) で空きを作ってから書き込む
+    const seq = after.length === 0 ? text : `${CSI}${text.length}@${text}`;
+    this.#term.write(seq);
   };
 
   #handleCursorErase = (backspace) => {
     if (this.#wouldWrap()) return this.#orig.handleCursorErase(backspace);
 
     if (backspace) {
-      if (this.#cursor <= 0) return;
-      const i = this.#cursor;
-      this.#input = this.#input.slice(0, i - 1) + this.#input.slice(i);
-      this.#cursor = i - 1;
-      // BS で 1 戻る → DCH (CSI P) で 1 文字削除
+      if (this.#echo.cursor <= 0) return;
+      const i = this.#echo.cursor;
+      this.#echo.input = this.#echo.input.slice(0, i - 1) + this.#echo.input.slice(i);
+      this.#echo.cursor = i - 1;
       this.#term.write(`\b${CSI}P`);
     } else {
-      if (this.#cursor >= this.#input.length) return;
-      const i = this.#cursor;
-      this.#input = this.#input.slice(0, i) + this.#input.slice(i + 1);
+      if (this.#echo.cursor >= this.#echo.input.length) return;
+      const i = this.#echo.cursor;
+      this.#echo.input = this.#echo.input.slice(0, i) + this.#echo.input.slice(i + 1);
       this.#term.write(`${CSI}P`);
     }
   };
 
-  // ヒストリ移動 (↑↓/C-p/C-n) や autocomplete から呼ばれる入力差し替え。
-  // clearFirst===false 系（killTo* 経由）は元実装にフォールバックさせない
-  // ように、ここではリライト後に内部状態を一致させる。
+  // 履歴移動 (↑↓/C-p/C-n) や autocomplete 経由の入力差し替え。
+  // killTo* 内部からの呼び出し (clearFirst=false) は元実装に任せる。
   #setInput = (newInput, clearFirst = true) => {
-    if (!clearFirst || this.#wouldWrap(Math.max(0, newInput.length - this.#input.length))) {
-      return this.#orig.setInput(newInput, clearFirst);
+    if (!clearFirst) return this.#orig.setInput(newInput, false);
+    if (this.#wouldWrap(Math.max(0, newInput.length - this.#echo.input.length))) {
+      return this.#orig.setInput(newInput, true);
     }
-    this.#term.write(`\r${CSI}${this.#promptLen + 1}G${CSI}K${newInput}`);
-    this.#input = newInput;
-    this.#cursor = newInput.length;
+    this.#writeLineBody(newInput);
   };
 
   #install() {
@@ -234,19 +209,16 @@ class LocalEchoEnhancer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// REPL 本体
-// ---------------------------------------------------------------------------
-
 // プロンプトは ASCII のみ。local-echo はプロンプト文字列の文字数でカーソル
-// 位置を計算するため、ANSI エスケープシーケンスや曖昧幅文字 (❯ など) を
-// 含めると内部カーソルと実カーソルがズレる。色付けは諦めて素のテキスト。
+// 位置を計算するため、ANSI エスケープや曖昧幅文字 (❯ 等) を含めると
+// 内部カーソルと実カーソルがズレる。
 const PROMPT = 'calc> ';
 
 class ReplUI {
   #term;
   #echo;
   #session;
+  #initialHints;
 
   constructor({ mount }) {
     this.#term = new Terminal({
@@ -275,6 +247,7 @@ class ReplUI {
     new LocalEchoEnhancer(this.#term, this.#echo);
 
     this.#session = create_session();
+    this.#initialHints = this.#renderHints('');
   }
 
   #formatResult(result) {
@@ -314,8 +287,7 @@ class ReplUI {
   async run() {
     await this.#banner();
     while (true) {
-      const hints = this.#renderHints('');
-      if (hints) await this.#echo.println(hints);
+      if (this.#initialHints) await this.#echo.println(this.#initialHints);
 
       let line;
       try {
@@ -333,6 +305,5 @@ class ReplUI {
   }
 }
 
-// ---- エントリポイント (top-level await) ----
 const repl = new ReplUI({ mount: document.getElementById('terminal') });
 await repl.run();
