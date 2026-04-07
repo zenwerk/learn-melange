@@ -1,6 +1,12 @@
 # melange-sample
 
-OCaml/Melange でロジックコアを書き、JS/TS で UI を実装するフロントエンド開発の検証プロジェクト。
+OCaml/Melange でロジックコア（電卓 DSL の字句解析・構文解析・評価）を書き、
+ブラウザでは xterm.js ベースの REPL UI から呼び出すフロントエンド検証プロジェクト。
+
+- **コアロジック**: OCaml + ocamllex + Menhir (incremental API)
+- **トランスパイル**: Melange で ES6 モジュールへ変換
+- **UI**: Vite + xterm.js + @gytx/xterm-local-echo
+- **REPL**: readline 風 Emacs キーバインド (C-a/C-e/C-b/C-f/C-h/C-k/C-u/C-w/C-p/C-n) 対応
 
 ## 前提条件
 
@@ -16,69 +22,111 @@ opam switch create . ocaml-base-compiler.4.14.2 --no-install
 
 # 2. 必要なパッケージをインストール
 eval $(opam env)
-opam install melange dune ocaml-lsp-server reason -y
+opam install melange dune ocaml-lsp-server reason menhir -y
 
 # 3. direnv を許可 (以降 cd するだけで opam env が自動適用される)
 direnv allow
+
+# 4. JS 側依存をインストール
+npm install
 ```
 
 ## プロジェクト構成
 
 ```
 melange-sample/
-├── dune-project          # dune + melange プラグイン宣言
+├── dune-project
 ├── src/
-│   ├── dune              # melange.emit stanza (ES6 モジュール出力)
-│   └── hello.ml          # OCaml ソースコード
-├── _build/               # ビルド成果物 (gitignore 対象)
-├── _opam/                # opam local switch (gitignore 対象)
-├── .envrc                # direnv 設定 (eval $(opam env))
-└── .gitignore
+│   ├── dune                # melange.emit stanza
+│   ├── main.ml             # エントリポイント
+│   ├── lib/
+│   │   ├── lexer.mll       # ocamllex 字句定義
+│   │   ├── parser.mly      # Menhir incremental パーサ
+│   │   ├── ast.ml          # 抽象構文木
+│   │   ├── eval.ml         # 評価器
+│   │   └── session.ml      # REPL セッション (eval + hints)
+│   └── vendor/menhirLib/   # Menhir ランタイム (Melange 互換にベンダリング)
+├── ui/
+│   ├── index.html
+│   ├── style.css
+│   └── main.js             # xterm.js REPL UI と readline 風キーバインド層
+├── vite.config.js          # Melange 出力を alias 経由で取り込む
+├── package.json
+├── _build/                 # gitignore
+├── _opam/                  # gitignore
+└── .envrc
 ```
 
-## ビルド
+## ビルドと起動
 
 ```bash
+# 1. OCaml/Melange を JS にコンパイル
 dune build @melange
+
+# 2. Vite 開発サーバを起動 (http://localhost:5173)
+npm run dev
 ```
 
-生成された JS は `_build/default/src/output/` 以下に出力される。
+ブラウザで開くと、xterm.js 上に電卓 REPL が表示される:
 
 ```
-_build/default/src/output/
-└── src/
-    └── hello.js          # hello.ml から生成された ES6 モジュール
+Melange Calculator REPL
+readline keys: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n up/down
+
+next: [number] [identifier] [-] [(]
+calc> 1 + 2 * 3
+- : float = 7
 ```
 
-## 動作確認
+## REPL の機能
 
-```bash
-# 生成された JS を Node.js で実行
-node _build/default/src/output/src/hello.js
-# => Hello, Melange!
-```
+### 評価
+
+- 算術式: `1 + 2 * 3`
+- 変数束縛: 評価結果は内部に保持される（実装中）
+- エラーは列番号付きキャレットで指示される
+
+### 入力ヒント
+
+Menhir incremental API の `acceptable` を使い、現在のカーソル位置で次に来うる
+トークン集合を `next: [...]` 行に表示する。文法上の許容入力をリアルタイムに把握できる。
+
+### キーバインド (Emacs / readline 互換)
+
+| キー | 動作 |
+|------|------|
+| `C-a` / `C-e` | 行頭 / 行末 |
+| `C-b` / `C-f` | 1 文字 左 / 右 |
+| `C-h` / `Backspace` | 1 文字削除 |
+| `C-k` | カーソル位置から行末まで削除 |
+| `C-u` | 行頭からカーソル位置まで削除 |
+| `C-w` | 直前の単語を削除 |
+| `M-b` / `M-f` | 単語単位で 左 / 右 |
+| `C-p` / `↑` | 履歴を遡る |
+| `C-n` / `↓` | 履歴を進む |
+
+差分更新 (ICH/DCH/EL ANSI シーケンス) を直接書き込むことで、編集中のちらつきを排除している。
 
 ## 開発ワークフロー
 
-### ファイル変更の監視 (watch モード)
+### Melange 側を watch する
 
 ```bash
 dune build @melange --watch
 ```
 
-ソースファイルを変更すると自動的に JS が再生成される。
-
-### OCaml ソースの追加
-
-1. `src/` に `.ml` ファイルを追加する
-2. `dune build @melange` でビルドすると `_build/default/src/output/src/` に対応する `.js` が生成される
+OCaml ソース変更時に自動再ビルドされ、Vite の HMR がブラウザを更新する。
 
 ### 主要ツール
 
 | ツール | バージョン | 用途 |
 |--------|-----------|------|
 | OCaml | 4.14.2 | コンパイラ |
-| Melange | 6.0.1 | OCaml -> JS コンパイラ |
+| Melange | 6.0.1 | OCaml → JS |
+| Menhir | latest | 構文解析器ジェネレータ (incremental API 使用) |
 | dune | 3.22 | ビルドシステム |
-| ocaml-lsp-server | 1.21.0 | エディタ補完・型情報 |
-| reason | 3.17 | ReasonML 構文サポート (任意) |
+| Vite | 6.x | フロントエンドバンドラ / 開発サーバ |
+| @xterm/xterm | 5.x | ターミナル描画レイヤ |
+| @gytx/xterm-local-echo | 0.1.x | 行編集 / 履歴管理 |
+
+詳細な実装ノートは `TIPS.md` を参照。
