@@ -357,14 +357,19 @@ class ReplUI {
   }
 
   // Ctrl(+Shift)++ / Ctrl+- / Ctrl+0 でフォントサイズを増減・リセット。
-  // xterm の keydown フックは false を返すとそのイベントを無視するので、
-  // ブラウザ既定のズームを潰しつつ自前のサイズ変更を適用する。
+  // JIS では Ctrl+Shift+; が '+'、US では Ctrl+= が '+' として届く。
+  // key と code の両方で判定して配列差を吸収する。
+  // false を返すと xterm はイベントを無視するので、ブラウザ既定ズームと
+  // 自前サイズ変更の衝突を防ぐ。
   #handleKeyEvent = (e) => {
     if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey)) return true;
-    const { key } = e;
-    if (key === '+' || key === '=') this.#zoom(+1);
-    else if (key === '-' || key === '_') this.#zoom(-1);
-    else if (key === '0') this.#setFontSize(FONT_SIZE_DEFAULT);
+    const { key, code } = e;
+    const isPlus  = key === '+' || key === '=' || key === ';' || code === 'Equal' || code === 'Semicolon';
+    const isMinus = key === '-' || key === '_' || code === 'Minus';
+    const isZero  = key === '0' || code === 'Digit0';
+    if (isPlus) this.#zoom(+1);
+    else if (isMinus) this.#zoom(-1);
+    else if (isZero) this.#setFontSize(FONT_SIZE_DEFAULT);
     else return true;
     e.preventDefault();
     return false;
