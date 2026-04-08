@@ -33,9 +33,25 @@ const CSI = `${ESC}[`;
 
 const sgr = (code) => (s) => `${CSI}${code}m${s}${CSI}0m`;
 
-// East Asian Width ベースの文字幅判定。全角/ワイド/絵文字は 2 セル、制御文字は 0、
-// それ以外は 1 を返す。local-echo はコード単位で列計算しているので、マルチバイト
-// 対応のためセル幅を明示的に扱う必要がある。
+// コードポイントのセル幅を返す。@gytx/xterm-local-echo は `cursor` を UTF-16
+// index で扱っているので、カーソル移動や ICH/DCH のカラム数はセル幅基準で
+// 別途計算する必要がある。combining mark と制御文字を 0 扱いしないと
+// dakuten (U+3099) 等で表示とカーソルがズレる。
+const isCombining = (cp) => (
+  (cp >= 0x0300 && cp <= 0x036f) ||
+  (cp >= 0x0483 && cp <= 0x0489) ||
+  (cp >= 0x0591 && cp <= 0x05bd) || cp === 0x05bf ||
+  (cp >= 0x05c1 && cp <= 0x05c2) || (cp >= 0x05c4 && cp <= 0x05c5) || cp === 0x05c7 ||
+  (cp >= 0x0610 && cp <= 0x061a) || (cp >= 0x064b && cp <= 0x065f) || cp === 0x0670 ||
+  (cp >= 0x06d6 && cp <= 0x06dc) || (cp >= 0x06df && cp <= 0x06e4) ||
+  (cp >= 0x06e7 && cp <= 0x06e8) || (cp >= 0x06ea && cp <= 0x06ed) ||
+  (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x202a && cp <= 0x202e) ||
+  (cp >= 0x2060 && cp <= 0x206f) ||
+  (cp >= 0x3099 && cp <= 0x309a) ||
+  (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xfe20 && cp <= 0xfe2f) ||
+  cp === 0xfeff ||
+  (cp >= 0xe0100 && cp <= 0xe01ef)
+);
 const isWide = (cp) => (
   (cp >= 0x1100 && cp <= 0x115f) ||
   (cp >= 0x2e80 && cp <= 0x303e) ||
@@ -53,23 +69,30 @@ const isWide = (cp) => (
   (cp >= 0x20000 && cp <= 0x2fffd) ||
   (cp >= 0x30000 && cp <= 0x3fffd)
 );
-const charWidthAt = (s, i) => {
-  const cp = s.codePointAt(i);
-  if (cp === undefined) return 0;
-  if (cp < 0x20 || cp === 0x7f) return 0;
+const cpWidth = (cp) => {
+  if (cp < 0x20 || cp === 0x7f || isCombining(cp)) return 0;
   return isWide(cp) ? 2 : 1;
 };
 const strWidth = (s) => {
   let w = 0;
-  for (let i = 0; i < s.length;) {
+  for (const ch of s) w += cpWidth(ch.codePointAt(0));
+  return w;
+};
+// UTF-16 index [start, end) 区間のセル幅
+const strWidthRange = (s, start, end) => {
+  let w = 0;
+  for (let i = start; i < end;) {
     const cp = s.codePointAt(i);
-    w += (cp < 0x20 || cp === 0x7f) ? 0 : (isWide(cp) ? 2 : 1);
+    w += cpWidth(cp);
     i += cp > 0xffff ? 2 : 1;
   }
   return w;
 };
-// i の位置にある code point の UTF-16 長 (1 or 2)
-const cpLen = (s, i) => (s.codePointAt(i) > 0xffff ? 2 : 1);
+// i が低サロゲートを指していたら直前の高サロゲートにスナップ
+const cpStart = (s, i) => {
+  const c = s.charCodeAt(i);
+  return (c >= 0xdc00 && c <= 0xdfff) ? i - 1 : i;
+};
 
 const Ansi = Object.freeze({
   greenBold: sgr('1;32'),
@@ -211,8 +234,7 @@ class LocalEchoEnhancer {
     this.#echo.input = this.#echo.input.slice(0, i) + text + after;
     this.#echo.cursor = i + text.length;
 
-    // 中間挿入は ICH (CSI n @) で "セル幅ぶん" の空きを作ってから書き込む。
-    // n は文字数ではなくセル幅である点に注意 (全角は 2 セル)。
+    // 末尾への追記のみ ICH 不要。中間挿入は ICH でセル幅分の空きを作る必要がある。
     const seq = after.length === 0 ? text : `${CSI}${textW}@${text}`;
     this.#term.write(seq);
   };
@@ -223,20 +245,17 @@ class LocalEchoEnhancer {
     const s = this.#echo.input;
     if (backspace) {
       if (this.#echo.cursor <= 0) return;
-      // 直前 code point (サロゲートペア対応) とそのセル幅を取得
-      let i = this.#echo.cursor - 1;
-      if (i > 0 && s.charCodeAt(i) >= 0xdc00 && s.charCodeAt(i) <= 0xdfff) i--;
-      const w = charWidthAt(s, i);
+      const i = cpStart(s, this.#echo.cursor - 1);
+      const w = strWidthRange(s, i, this.#echo.cursor);
       this.#echo.input = s.slice(0, i) + s.slice(this.#echo.cursor);
       this.#echo.cursor = i;
-      // カーソルを w セル戻してから w セル分削除
       this.#term.write(`${CSI}${w}D${CSI}${w}P`);
     } else {
       if (this.#echo.cursor >= s.length) return;
       const i = this.#echo.cursor;
-      const w = charWidthAt(s, i);
-      const n = cpLen(s, i);
-      this.#echo.input = s.slice(0, i) + s.slice(i + n);
+      const next = i + (s.codePointAt(i) > 0xffff ? 2 : 1);
+      const w = strWidthRange(s, i, next);
+      this.#echo.input = s.slice(0, i) + s.slice(next);
       this.#term.write(`${CSI}${w}P`);
     }
   };
@@ -251,39 +270,31 @@ class LocalEchoEnhancer {
     this.#writeLineBody(newInput);
   };
 
-  // setCursor を差し替え: UTF-16 index 差分ではなくセル幅差分で左右移動し、
-  // サロゲートペアを越えて不正な位置に止まらないよう正規化する。
-  // (折り返し時はフォールバック)
+  // UTF-16 index ではなくセル幅差分でカーソルを動かす。
+  // 折り返しが絡む場合は元実装に委ねる。
   #setCursor = (newCursor) => {
     const s = this.#echo.input;
     if (newCursor < 0) newCursor = 0;
-    if (newCursor > s.length) newCursor = s.length;
-    // サロゲートペアの中間を指していたら後方へスナップ
-    if (newCursor > 0 && newCursor < s.length) {
-      const c = s.charCodeAt(newCursor);
-      if (c >= 0xdc00 && c <= 0xdfff) newCursor--;
-    }
+    else if (newCursor > s.length) newCursor = s.length;
+    else if (newCursor > 0) newCursor = cpStart(s, newCursor);
     if (this.#wouldWrap()) return this.#orig.setCursor(newCursor);
 
-    const prevW = strWidth(s.slice(0, this.#echo.cursor));
-    const newW = strWidth(s.slice(0, newCursor));
-    if (newW > prevW) this.#term.write(`${CSI}${newW - prevW}C`);
-    else if (newW < prevW) this.#term.write(`${CSI}${prevW - newW}D`);
+    const cur = this.#echo.cursor;
+    if (newCursor > cur) this.#term.write(`${CSI}${strWidthRange(s, cur, newCursor)}C`);
+    else if (newCursor < cur) this.#term.write(`${CSI}${strWidthRange(s, newCursor, cur)}D`);
     this.#echo.cursor = newCursor;
   };
 
-  // handleCursorMove を差し替え: dir は "文字 (code point) 数" として扱い、
-  // サロゲートペアを 1 歩で飛び越える。
+  // dir は code point 単位 (サロゲートペアは 1 歩)。
   #handleCursorMove = (dir) => {
     const s = this.#echo.input;
     let i = this.#echo.cursor;
     if (dir > 0) {
-      for (let k = 0; k < dir && i < s.length; k++) i += cpLen(s, i);
-    } else if (dir < 0) {
-      for (let k = 0; k < -dir && i > 0; k++) {
-        i--;
-        if (i > 0 && s.charCodeAt(i) >= 0xdc00 && s.charCodeAt(i) <= 0xdfff) i--;
+      for (let k = 0; k < dir && i < s.length; k++) {
+        i += s.codePointAt(i) > 0xffff ? 2 : 1;
       }
+    } else if (dir < 0) {
+      for (let k = 0; k < -dir && i > 0; k++) i = cpStart(s, i - 1);
     }
     this.#setCursor(i);
   };
