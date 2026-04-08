@@ -33,6 +33,44 @@ const CSI = `${ESC}[`;
 
 const sgr = (code) => (s) => `${CSI}${code}m${s}${CSI}0m`;
 
+// East Asian Width ベースの文字幅判定。全角/ワイド/絵文字は 2 セル、制御文字は 0、
+// それ以外は 1 を返す。local-echo はコード単位で列計算しているので、マルチバイト
+// 対応のためセル幅を明示的に扱う必要がある。
+const isWide = (cp) => (
+  (cp >= 0x1100 && cp <= 0x115f) ||
+  (cp >= 0x2e80 && cp <= 0x303e) ||
+  (cp >= 0x3041 && cp <= 0x33ff) ||
+  (cp >= 0x3400 && cp <= 0x4dbf) ||
+  (cp >= 0x4e00 && cp <= 0x9fff) ||
+  (cp >= 0xa000 && cp <= 0xa4cf) ||
+  (cp >= 0xac00 && cp <= 0xd7a3) ||
+  (cp >= 0xf900 && cp <= 0xfaff) ||
+  (cp >= 0xfe30 && cp <= 0xfe4f) ||
+  (cp >= 0xff00 && cp <= 0xff60) ||
+  (cp >= 0xffe0 && cp <= 0xffe6) ||
+  (cp >= 0x1f300 && cp <= 0x1f64f) ||
+  (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+  (cp >= 0x20000 && cp <= 0x2fffd) ||
+  (cp >= 0x30000 && cp <= 0x3fffd)
+);
+const charWidthAt = (s, i) => {
+  const cp = s.codePointAt(i);
+  if (cp === undefined) return 0;
+  if (cp < 0x20 || cp === 0x7f) return 0;
+  return isWide(cp) ? 2 : 1;
+};
+const strWidth = (s) => {
+  let w = 0;
+  for (let i = 0; i < s.length;) {
+    const cp = s.codePointAt(i);
+    w += (cp < 0x20 || cp === 0x7f) ? 0 : (isWide(cp) ? 2 : 1);
+    i += cp > 0xffff ? 2 : 1;
+  }
+  return w;
+};
+// i の位置にある code point の UTF-16 長 (1 or 2)
+const cpLen = (s, i) => (s.codePointAt(i) > 0xffff ? 2 : 1);
+
 const Ansi = Object.freeze({
   greenBold: sgr('1;32'),
   blue: sgr('94'),
@@ -61,6 +99,8 @@ class LocalEchoEnhancer {
       handleCursorInsert: echo.handleCursorInsert.bind(echo),
       handleCursorErase: echo.handleCursorErase.bind(echo),
       setInput: echo.setInput.bind(echo),
+      setCursor: echo.setCursor.bind(echo),
+      handleCursorMove: echo.handleCursorMove.bind(echo),
     };
     this.#install();
   }
@@ -69,30 +109,31 @@ class LocalEchoEnhancer {
     return this.#echo.activePrompt?.prompt?.length ?? 0;
   }
 
-  // 差分更新パッチは行折り返しに対応していない。プロンプト+入力が cols を
-  // 超えうる場合のみ true を返し、呼び出し側は元実装にフォールバックする。
-  #wouldWrap(extra = 0) {
-    return this.#promptLen() + this.#echo.input.length + extra >= this.#term.cols;
+  // 差分更新パッチは行折り返しに対応していない。プロンプト+入力のセル幅が
+  // cols を超えうる場合のみ true を返し、呼び出し側は元実装にフォールバック。
+  // extraWidth は挿入予定のセル幅 (コード単位数ではない)。
+  #wouldWrap(extraWidth = 0) {
+    return this.#promptLen() + strWidth(this.#echo.input) + extraWidth >= this.#term.cols;
   }
 
   // 共通プリミティブ: 行を空にして next を書き込み、カーソルを末尾に置く。
-  // 呼び出し側で必要なら追加で left 移動シーケンスを書く。
   #writeLineBody(next) {
     this.#term.write(`\r${CSI}${this.#promptLen() + 1}G${CSI}K${next}`);
     this.#echo.input = next;
     this.#echo.cursor = next.length;
   }
 
-  // 行内容を next に置き換え、カーソルを newCursor 列に配置する。
+  // 行内容を next に置き換え、カーソルを newCursor (UTF-16 index) に配置する。
   #rewriteLine(next, newCursor) {
-    if (this.#wouldWrap(Math.max(0, next.length - this.#echo.input.length))) {
+    const delta = Math.max(0, strWidth(next) - strWidth(this.#echo.input));
+    if (this.#wouldWrap(delta)) {
       this.#echo.clearInput();
       this.#echo.cursor = newCursor;
       this.#orig.setInput(next, false);
       return;
     }
     this.#writeLineBody(next);
-    const back = next.length - newCursor;
+    const back = strWidth(next.slice(newCursor));
     if (back > 0) this.#term.write(`${CSI}${back}D`);
     this.#echo.cursor = newCursor;
   }
@@ -162,32 +203,41 @@ class LocalEchoEnhancer {
   };
 
   #handleCursorInsert = (text) => {
-    if (this.#wouldWrap(text.length)) return this.#orig.handleCursorInsert(text);
+    const textW = strWidth(text);
+    if (this.#wouldWrap(textW)) return this.#orig.handleCursorInsert(text);
 
     const i = this.#echo.cursor;
     const after = this.#echo.input.slice(i);
     this.#echo.input = this.#echo.input.slice(0, i) + text + after;
     this.#echo.cursor = i + text.length;
 
-    // 中間挿入は ICH (CSI n @) で空きを作ってから書き込む
-    const seq = after.length === 0 ? text : `${CSI}${text.length}@${text}`;
+    // 中間挿入は ICH (CSI n @) で "セル幅ぶん" の空きを作ってから書き込む。
+    // n は文字数ではなくセル幅である点に注意 (全角は 2 セル)。
+    const seq = after.length === 0 ? text : `${CSI}${textW}@${text}`;
     this.#term.write(seq);
   };
 
   #handleCursorErase = (backspace) => {
     if (this.#wouldWrap()) return this.#orig.handleCursorErase(backspace);
 
+    const s = this.#echo.input;
     if (backspace) {
       if (this.#echo.cursor <= 0) return;
-      const i = this.#echo.cursor;
-      this.#echo.input = this.#echo.input.slice(0, i - 1) + this.#echo.input.slice(i);
-      this.#echo.cursor = i - 1;
-      this.#term.write(`\b${CSI}P`);
+      // 直前 code point (サロゲートペア対応) とそのセル幅を取得
+      let i = this.#echo.cursor - 1;
+      if (i > 0 && s.charCodeAt(i) >= 0xdc00 && s.charCodeAt(i) <= 0xdfff) i--;
+      const w = charWidthAt(s, i);
+      this.#echo.input = s.slice(0, i) + s.slice(this.#echo.cursor);
+      this.#echo.cursor = i;
+      // カーソルを w セル戻してから w セル分削除
+      this.#term.write(`${CSI}${w}D${CSI}${w}P`);
     } else {
-      if (this.#echo.cursor >= this.#echo.input.length) return;
+      if (this.#echo.cursor >= s.length) return;
       const i = this.#echo.cursor;
-      this.#echo.input = this.#echo.input.slice(0, i) + this.#echo.input.slice(i + 1);
-      this.#term.write(`${CSI}P`);
+      const w = charWidthAt(s, i);
+      const n = cpLen(s, i);
+      this.#echo.input = s.slice(0, i) + s.slice(i + n);
+      this.#term.write(`${CSI}${w}P`);
     }
   };
 
@@ -195,10 +245,47 @@ class LocalEchoEnhancer {
   // killTo* 内部からの呼び出し (clearFirst=false) は元実装に任せる。
   #setInput = (newInput, clearFirst = true) => {
     if (!clearFirst) return this.#orig.setInput(newInput, false);
-    if (this.#wouldWrap(Math.max(0, newInput.length - this.#echo.input.length))) {
+    if (this.#wouldWrap(Math.max(0, strWidth(newInput) - strWidth(this.#echo.input)))) {
       return this.#orig.setInput(newInput, true);
     }
     this.#writeLineBody(newInput);
+  };
+
+  // setCursor を差し替え: UTF-16 index 差分ではなくセル幅差分で左右移動し、
+  // サロゲートペアを越えて不正な位置に止まらないよう正規化する。
+  // (折り返し時はフォールバック)
+  #setCursor = (newCursor) => {
+    const s = this.#echo.input;
+    if (newCursor < 0) newCursor = 0;
+    if (newCursor > s.length) newCursor = s.length;
+    // サロゲートペアの中間を指していたら後方へスナップ
+    if (newCursor > 0 && newCursor < s.length) {
+      const c = s.charCodeAt(newCursor);
+      if (c >= 0xdc00 && c <= 0xdfff) newCursor--;
+    }
+    if (this.#wouldWrap()) return this.#orig.setCursor(newCursor);
+
+    const prevW = strWidth(s.slice(0, this.#echo.cursor));
+    const newW = strWidth(s.slice(0, newCursor));
+    if (newW > prevW) this.#term.write(`${CSI}${newW - prevW}C`);
+    else if (newW < prevW) this.#term.write(`${CSI}${prevW - newW}D`);
+    this.#echo.cursor = newCursor;
+  };
+
+  // handleCursorMove を差し替え: dir は "文字 (code point) 数" として扱い、
+  // サロゲートペアを 1 歩で飛び越える。
+  #handleCursorMove = (dir) => {
+    const s = this.#echo.input;
+    let i = this.#echo.cursor;
+    if (dir > 0) {
+      for (let k = 0; k < dir && i < s.length; k++) i += cpLen(s, i);
+    } else if (dir < 0) {
+      for (let k = 0; k < -dir && i > 0; k++) {
+        i--;
+        if (i > 0 && s.charCodeAt(i) >= 0xdc00 && s.charCodeAt(i) <= 0xdfff) i--;
+      }
+    }
+    this.#setCursor(i);
   };
 
   #install() {
@@ -206,6 +293,8 @@ class LocalEchoEnhancer {
     this.#echo.handleCursorInsert = this.#handleCursorInsert;
     this.#echo.handleCursorErase = this.#handleCursorErase;
     this.#echo.setInput = this.#setInput;
+    this.#echo.setCursor = this.#setCursor;
+    this.#echo.handleCursorMove = this.#handleCursorMove;
   }
 }
 
