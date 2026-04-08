@@ -314,40 +314,71 @@ class LocalEchoEnhancer {
 // 内部カーソルと実カーソルがズレる。
 const PROMPT = 'calc> ';
 
+const FONT_SIZE_DEFAULT = 14;
+const FONT_SIZE_MIN = 8;
+const FONT_SIZE_MAX = 40;
+
 class ReplUI {
   #term;
   #echo;
   #session;
   #initialHints;
+  #fit;
 
   constructor({ mount }) {
     this.#term = new Terminal({
       theme: THEME,
       fontFamily:
         "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace",
-      fontSize: 14,
+      fontSize: FONT_SIZE_DEFAULT,
       cursorBlink: true,
       convertEol: true,
       allowProposedApi: true,
     });
 
-    const fit = new FitAddon();
+    this.#fit = new FitAddon();
     this.#echo = new LocalEchoAddon({
       historySize: 200,
       enableAutocomplete: false,
       enableIncompleteInput: false,
     });
 
-    this.#term.loadAddon(fit);
+    this.#term.loadAddon(this.#fit);
     this.#term.loadAddon(this.#echo);
+    this.#term.attachCustomKeyEventHandler(this.#handleKeyEvent);
     this.#term.open(mount);
-    fit.fit();
-    window.addEventListener('resize', () => fit.fit());
+    this.#fit.fit();
+    window.addEventListener('resize', () => this.#fit.fit());
 
     new LocalEchoEnhancer(this.#term, this.#echo);
 
     this.#session = create_session();
     this.#initialHints = this.#renderHints('');
+  }
+
+  // Ctrl(+Shift)++ / Ctrl+- / Ctrl+0 でフォントサイズを増減・リセット。
+  // xterm の keydown フックは false を返すとそのイベントを無視するので、
+  // ブラウザ既定のズームを潰しつつ自前のサイズ変更を適用する。
+  #handleKeyEvent = (e) => {
+    if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey)) return true;
+    const { key } = e;
+    if (key === '+' || key === '=') this.#zoom(+1);
+    else if (key === '-' || key === '_') this.#zoom(-1);
+    else if (key === '0') this.#setFontSize(FONT_SIZE_DEFAULT);
+    else return true;
+    e.preventDefault();
+    return false;
+  };
+
+  #zoom(delta) {
+    this.#setFontSize(this.#term.options.fontSize + delta);
+  }
+
+  #setFontSize(size) {
+    const clamped = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
+    if (clamped === this.#term.options.fontSize) return;
+    this.#term.options.fontSize = clamped;
+    this.#fit.fit();
   }
 
   #formatResult(result) {
@@ -378,7 +409,7 @@ class ReplUI {
     await this.#echo.println(Ansi.greenBold('Melange Calculator REPL'));
     await this.#echo.println(
       Ansi.dim(
-        'readline keys: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n up/down'
+        'readline keys: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n up/down  / zoom: C-+ C-- C-0'
       )
     );
     await this.#echo.println('');
