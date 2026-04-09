@@ -171,6 +171,11 @@ export class ReplUI {
     const k = e.key;
     const code = e.code;
 
+    // Ctrl+L: 画面クリア
+    if (!e.shiftKey && (k === 'l' || k === 'L' || code === 'KeyL')) {
+      this.#clearScreen();
+      return true;
+    }
     // Ctrl+Shift+E: effect cycle
     if ((k === 'E' || k === 'e' || code === 'KeyE') && e.shiftKey) {
       const next = this.effects?.cycle();
@@ -185,6 +190,15 @@ export class ReplUI {
     if (isMinus) { this.#zoom(-1); return true; }
     if (isZero)  { this.#setFontSize(FONT_SIZE_DEFAULT); return true; }
     return false;
+  }
+
+  #clearScreen() {
+    this.buffer.clear();
+    this.cursorRow = 0;
+    if (this.awaitingInput) {
+      this.editor.begin(PROMPT, this.cursorRow);
+    }
+    this.effects?.requestRender();
   }
 
   #zoom(delta) { this.#setFontSize(this.fontSize + delta); }
@@ -224,7 +238,7 @@ export class ReplUI {
     this.#println([{ text: 'Melange Calculator REPL', style: S.greenBold }]);
     this.#println([{
       text: 'readline: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n ↑↓  /' +
-            ' zoom: C-= C-- C-0  / effect: :effect / C-S-e',
+            ' clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e',
       style: S.dim,
     }]);
     this.#println('');
