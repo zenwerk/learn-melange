@@ -4,6 +4,7 @@ _opam/
 *.install
 .direnv/
 node_modules/
+.mcp.json
 
 # menhir generated (built by dune rule)
 src/lib/parser.ml
