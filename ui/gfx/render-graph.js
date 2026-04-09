@@ -1,0 +1,169 @@
+// 名前付きテクスチャを中継する簡易レンダリンググラフ。
+//
+// 規約:
+//   - 入力テクスチャ 'source' は毎フレーム TerminalCanvas からアップロード。
+//   - 入力テクスチャ 'prev' は「前フレームの最終出力」。プロファイルは自由にサンプルできる。
+//   - プロファイルが addPass({ output: 'screen' }) と書いたパスは最終パス扱い。
+//     実際には内部の 'final' テクスチャに描画され、RenderGraph が末尾で 'final' を
+//     default framebuffer にブリットする。これにより prev フィードバックが自然に回る。
+//   - シェーダー中の uniform 命名規則:
+//       uSource    — inputs[0] (最初の入力)
+//       uInput1..  — inputs[1..]
+//       u_<name>   — 名前ベースでも参照可 (例: u_prev)
+//       uTime      — 秒
+//       uResolution— vec2(width, height)
+
+import {
+  createProgram, createTexture, createFramebuffer, uploadCanvas,
+} from './gl.js';
+import { createFullscreenQuad, QUAD_VS } from './fullscreen-quad.js';
+
+const BLIT_FS = /* glsl */`#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSource;
+out vec4 outColor;
+void main() { outColor = texture(uSource, vUv); }
+`;
+
+export class RenderGraph {
+  constructor(gl, { width, height }) {
+    this.gl = gl;
+    this.width = width;
+    this.height = height;
+    this.quad = createFullscreenQuad(gl);
+    this.passes = [];
+    this.textures = new Map();
+    this.#ensureTexture('source', { withFbo: false });
+    this.#ensureTexture('prev', { withFbo: true });
+    this.#ensureTexture('final', { withFbo: true });
+    this.blitProgram = createProgram(gl, QUAD_VS, BLIT_FS);
+    this.blitLoc = gl.getUniformLocation(this.blitProgram, 'uSource');
+  }
+
+  #ensureTexture(name, { withFbo = true } = {}) {
+    const gl = this.gl;
+    if (this.textures.has(name)) return this.textures.get(name);
+    const tex = createTexture(gl, { width: this.width, height: this.height });
+    const fbo = withFbo ? createFramebuffer(gl, tex) : null;
+    const entry = { tex, fbo, w: this.width, h: this.height };
+    this.textures.set(name, entry);
+    return entry;
+  }
+
+  addPass({ name, fs, inputs = [], output, uniforms = {} }) {
+    const gl = this.gl;
+    const program = createProgram(gl, QUAD_VS, fs);
+    const locs = {};
+    const nUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < nUniforms; i++) {
+      const info = gl.getActiveUniform(program, i);
+      if (!info) continue;
+      const n = info.name.replace(/\[0\]$/, '');
+      locs[n] = gl.getUniformLocation(program, n);
+    }
+    if (output && output !== 'screen') this.#ensureTexture(output);
+    for (const inp of inputs) this.#ensureTexture(inp, { withFbo: inp !== 'source' });
+    this.passes.push({ name, program, inputs, output, uniforms, locs });
+  }
+
+  clearPasses() {
+    const gl = this.gl;
+    for (const p of this.passes) gl.deleteProgram(p.program);
+    this.passes = [];
+  }
+
+  resize(width, height) {
+    if (width === this.width && height === this.height) return;
+    const gl = this.gl;
+    this.width = width;
+    this.height = height;
+    for (const [name, entry] of this.textures) {
+      gl.deleteTexture(entry.tex);
+      if (entry.fbo) gl.deleteFramebuffer(entry.fbo);
+      const tex = createTexture(gl, { width, height });
+      const fbo = entry.fbo ? createFramebuffer(gl, tex) : null;
+      this.textures.set(name, { tex, fbo, w: width, h: height });
+    }
+  }
+
+  render(sourceCanvas, time, globalUniforms = {}) {
+    const gl = this.gl;
+    const sourceEntry = this.textures.get('source');
+    uploadCanvas(gl, sourceEntry.tex, sourceCanvas);
+
+    gl.viewport(0, 0, this.width, this.height);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+
+    for (const pass of this.passes) {
+      gl.useProgram(pass.program);
+      for (let i = 0; i < pass.inputs.length; i++) {
+        const inpName = pass.inputs[i];
+        const entry = this.textures.get(inpName);
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, entry.tex);
+        if (i === 0 && pass.locs['uSource']) gl.uniform1i(pass.locs['uSource'], 0);
+        const byName = pass.locs[`u_${inpName}`];
+        if (byName) gl.uniform1i(byName, i);
+        const canonical = pass.locs[`uInput${i}`];
+        if (canonical) gl.uniform1i(canonical, i);
+      }
+      if (pass.locs['uTime']) gl.uniform1f(pass.locs['uTime'], time);
+      if (pass.locs['uResolution']) gl.uniform2f(pass.locs['uResolution'], this.width, this.height);
+      const merged = { ...pass.uniforms, ...globalUniforms };
+      for (const [k, v] of Object.entries(merged)) {
+        const loc = pass.locs[k];
+        if (loc == null) continue;
+        if (typeof v === 'number') gl.uniform1f(loc, v);
+        else if (Array.isArray(v)) {
+          if (v.length === 2) gl.uniform2f(loc, v[0], v[1]);
+          else if (v.length === 3) gl.uniform3f(loc, v[0], v[1], v[2]);
+          else if (v.length === 4) gl.uniform4f(loc, v[0], v[1], v[2], v[3]);
+        }
+      }
+      // 'screen' を指定するパスは実際には 'final' へ描画する
+      const outName = pass.output === 'screen' ? 'final' : pass.output;
+      if (outName) {
+        const out = this.textures.get(outName);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo);
+      } else {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
+      this.quad.draw();
+    }
+
+    // final → default framebuffer に blit
+    this.#blitFinalToScreen();
+    // 次フレームの 'prev' は今フレームの 'final'
+    this.#promoteFinalToPrev();
+  }
+
+  #blitFinalToScreen() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(this.blitProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.get('final').tex);
+    gl.uniform1i(this.blitLoc, 0);
+    this.quad.draw();
+  }
+
+  #promoteFinalToPrev() {
+    const prev = this.textures.get('prev');
+    const final = this.textures.get('final');
+    this.textures.set('prev', final);
+    this.textures.set('final', prev);
+  }
+
+  dispose() {
+    const gl = this.gl;
+    this.clearPasses();
+    gl.deleteProgram(this.blitProgram);
+    for (const entry of this.textures.values()) {
+      gl.deleteTexture(entry.tex);
+      if (entry.fbo) gl.deleteFramebuffer(entry.fbo);
+    }
+    this.textures.clear();
+  }
+}
