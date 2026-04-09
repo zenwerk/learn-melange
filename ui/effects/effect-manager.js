@@ -11,6 +11,9 @@ import { EFFECTS, EFFECT_ORDER } from './index.js';
 const STORAGE_KEY = 'melange-repl:effect';
 
 export class EffectManager {
+  #rafHandle = null;
+  #renderRequested = false;
+
   constructor({ terminalCanvas, overlayCanvas }) {
     this.terminalCanvas = terminalCanvas;
     this.overlayCanvas = overlayCanvas;
@@ -22,13 +25,8 @@ export class EffectManager {
     this.currentName = null;
     this.currentProfile = null;
     this.params = {};
-    this.#rafHandle = null;
-    this.#renderRequested = false;
     this.startTime = performance.now() / 1000;
   }
-
-  #rafHandle;
-  #renderRequested;
 
   list() {
     return EFFECT_ORDER.slice();
@@ -86,11 +84,7 @@ export class EffectManager {
   #updateLoop() {
     if (this.currentProfile?.animated && this.#rafHandle == null) {
       const loop = () => {
-        try {
-          this.#renderOnce();
-        } catch (e) {
-          console.error('[EffectManager] render error:', e);
-        }
+        this.#renderOnce();
         this.#rafHandle = requestAnimationFrame(loop);
       };
       this.#rafHandle = requestAnimationFrame(loop);

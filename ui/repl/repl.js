@@ -4,12 +4,11 @@
 // - :effect コマンド / font zoom / effect cycle のフック
 
 import { create_session } from 'melange-output/src/main.js';
-import { CellBuffer, makeCell } from '../terminal/cell-buffer.js';
+import { CellBuffer, makeCell, writeCells } from '../terminal/cell-buffer.js';
 import { TerminalCanvas } from '../terminal/terminal-canvas.js';
 import { LineEditor } from '../terminal/line-editor.js';
 import { History } from '../terminal/history.js';
 import { KeyboardInput } from '../terminal/keyboard-input.js';
-import { cpWidth } from '../terminal/width.js';
 import { EffectManager } from '../effects/effect-manager.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
 
@@ -31,8 +30,6 @@ const S = Object.freeze({
 export class ReplUI {
   constructor({ mount }) {
     this.mount = mount;
-    // レイアウト用の wrapper を用意
-    mount.style.position ||= 'relative';
 
     // 一旦 80x24 で仮初期化 (フォント読み込み後にリサイズ)
     this.buffer = new CellBuffer(24, 80);
@@ -109,29 +106,15 @@ export class ReplUI {
 
   // ------------- 出力 -------------
 
-  #writeChar(row, col, ch, st) {
-    const w = cpWidth(ch.codePointAt(0));
-    if (w === 0) return col;
-    if (col + w > this.buffer.cols) {
-      this.#newline();
-      row = this.cursorRow;
-      col = 0;
-    }
-    this.buffer.set(row, col, makeCell(ch, st, w));
-    if (w === 2) this.buffer.set(row, col + 1, makeCell(null, st, 0));
-    return col + w;
-  }
-
   #println(segments) {
-    // segments: Array<{ text, style? } | string>
     const parts = Array.isArray(segments) ? segments : [segments];
+    let row = this.cursorRow;
     let col = 0;
+    const onWrap = () => { this.#newline(); return { row: this.cursorRow, col: 0 }; };
     for (const seg of parts) {
       const text = typeof seg === 'string' ? seg : seg.text;
-      const st = typeof seg === 'string' ? null : seg.style;
-      for (const ch of text) {
-        col = this.#writeChar(this.cursorRow, col, ch, st);
-      }
+      const st   = typeof seg === 'string' ? null : seg.style;
+      ({ row, col } = writeCells(this.buffer, row, col, text, st, onWrap));
     }
     this.#newline();
   }

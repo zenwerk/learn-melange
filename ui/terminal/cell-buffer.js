@@ -2,6 +2,8 @@
 // 全角文字は左セルに { ch, width: 2 } を入れ、右セルに { ch: null, width: 0 } 哨兵を置く。
 // 行単位の dirty フラグで差分描画を駆動する。
 
+import { cpWidth } from './width.js';
+
 export const makeCell = (ch = ' ', style = null, width = 1) => ({ ch, style, width });
 const EMPTY = () => makeCell(' ', null, 1);
 
@@ -13,7 +15,7 @@ export class CellBuffer {
       Array.from({ length: cols }, EMPTY),
     );
     this.dirty = new Set();
-    for (let r = 0; r < rows; r++) this.dirty.add(r);
+    this.markAllDirty();
   }
 
   resize(rows, cols) {
@@ -74,10 +76,28 @@ export class CellBuffer {
     for (let r = 0; r < this.rows; r++) this.dirty.add(r);
   }
 
-  // dirty な行番号を返し、フラグをクリア。
+  // dirty な行番号を返し、フラグをクリア。順序不問 (draw 側は row 単位独立)。
   takeDirtyRows() {
-    const rows = [...this.dirty].sort((a, b) => a - b);
+    const rows = [...this.dirty];
     this.dirty.clear();
     return rows;
   }
+}
+
+// 文字列を row の col 位置から書き込む共通ヘルパ。全角文字は 2 セル占有 +
+// 右セルに null 哨兵を置く。onWrap が渡されていれば col 超過時に呼び出し、
+// (row, col) 組を新しく受け取って continue する。返り値は書き込み後の (row, col)。
+export function writeCells(buffer, row, col, text, style, onWrap) {
+  for (const ch of text) {
+    const w = cpWidth(ch.codePointAt(0));
+    if (w === 0) continue;
+    if (col + w > buffer.cols) {
+      if (!onWrap) break;
+      ({ row, col } = onWrap());
+    }
+    buffer.set(row, col, makeCell(ch, style, w));
+    if (w === 2) buffer.set(row, col + 1, makeCell(null, style, 0));
+    col += w;
+  }
+  return { row, col };
 }
