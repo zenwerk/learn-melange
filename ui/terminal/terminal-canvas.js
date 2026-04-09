@@ -108,9 +108,10 @@ export class TerminalCanvas {
     const { ctx, cellWidth: cw, cellHeight: ch, ascent, theme, buffer } = this;
 
     for (const r of dirty) {
-      // 行全体の背景を塗り直す
+      // 行全体の背景を塗り直す。グリフが上下にはみ出して残骸が残らないよう、
+      // 前後行にわずかにオーバーラップさせてクリアする。
       ctx.fillStyle = theme.background;
-      ctx.fillRect(0, r * ch, buffer.cols * cw, ch);
+      ctx.fillRect(0, r * ch - 1, buffer.cols * cw, ch + 2);
 
       const row = buffer.grid[r];
       for (let c = 0; c < buffer.cols; c++) {
@@ -118,8 +119,14 @@ export class TerminalCanvas {
         if (!cell || cell.ch === null) continue;
         if (cell.ch === ' ') continue;
         ctx.fillStyle = resolveFg(cell.style, theme);
-        // 全角文字の hinting: 左端 1px オフセットで見た目を整える
+        // セル矩形に clip してグリフの上下はみ出しを切り落とす
+        ctx.save();
+        ctx.beginPath();
+        const cellW = cw * (cell.width === 2 ? 2 : 1);
+        ctx.rect(c * cw, r * ch, cellW, ch);
+        ctx.clip();
         ctx.fillText(cell.ch, c * cw, r * ch + ascent);
+        ctx.restore();
       }
     }
 
@@ -133,7 +140,12 @@ export class TerminalCanvas {
         ctx.fillRect(col * cw, row * ch, cw * width, ch);
         if (cell && cell.ch && cell.ch !== ' ' && cell.ch !== null) {
           ctx.fillStyle = theme.background;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(col * cw, row * ch, cw * width, ch);
+          ctx.clip();
           ctx.fillText(cell.ch, col * cw, row * ch + ascent);
+          ctx.restore();
         }
       }
     }
