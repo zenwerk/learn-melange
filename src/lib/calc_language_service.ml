@@ -10,9 +10,7 @@ type state = {
 
 let empty = { env = Eval.StringMap.empty }
 
-(* 環境更新は session 側から呼ぶ。state は不変値として扱いたいので
-   セッションレイヤが ref に格納する。 *)
-let with_env (_st : state) (env : Eval.env) : state = { env }
+let of_env (env : Eval.env) : state = { env }
 
 (* 予約語テーブル。電卓には現状予約語はないが、将来 sin/cos/let 等を
    追加するときここに追記するだけで補完候補に自動で載る。 *)
@@ -43,36 +41,8 @@ let find_prefix_start (input : string) (offset : int) : int =
   if start < off && is_ident_start input.[start] then start
   else off
 
-(* ----- 部分パース (session.ml のロジックを複製) -----
-   session.ml に同等コードがあるが、将来 session.ml 側を整理する際に
-   ここに集約する想定。 *)
-
 module I = Parser.MenhirInterpreter
-
-let rec drain (checkpoint : 'a I.checkpoint) : 'a I.checkpoint =
-  match checkpoint with
-  | I.Shifting _ | I.AboutToReduce _ -> drain (I.resume checkpoint)
-  | _ -> checkpoint
-
-type 'a feed_result =
-  | Fed of 'a
-  | AtEof of Ast.statement I.checkpoint
-  | FeedError
-
-let rec feed_tokens lexbuf (cp : Ast.statement I.checkpoint) : Ast.statement feed_result =
-  match cp with
-  | I.InputNeeded _ ->
-    (try
-       let token = Lexer.token lexbuf in
-       if token = Parser.EOF then AtEof cp
-       else
-         let startp = lexbuf.Lexing.lex_start_p in
-         let endp = lexbuf.Lexing.lex_curr_p in
-         feed_tokens lexbuf (drain (I.offer cp (token, startp, endp)))
-     with Lexer.Lexer_error _ -> FeedError)
-  | I.Accepted v -> Fed v
-  | I.HandlingError _ | I.Rejected -> FeedError
-  | I.Shifting _ | I.AboutToReduce _ -> feed_tokens lexbuf (drain cp)
+open Parse_util
 
 (* token kind ラベルと「候補に展開するときの表示名・詳細」を対応づける。
    IDENT / FLOAT はカテゴリなので複数候補に展開される (後段で処理)。 *)
@@ -113,15 +83,15 @@ let variable_items (env : Eval.env) : completion_item list =
   Eval.StringMap.bindings env
   |> List.map (fun (name, v) ->
       { label = name;
-        kind = "variable";
+        kind = CkVariable;
         detail = Some (Printf.sprintf "float = %g" v) })
 
 let keyword_items () : completion_item list =
   List.map (fun (label, detail) ->
-      { label; kind = "keyword"; detail }) keywords
+      { label; kind = CkKeyword; detail }) keywords
 
 let symbol_item label : completion_item =
-  { label; kind = "operator"; detail = None }
+  { label; kind = CkOperator; detail = None }
 
 (* 接頭辞 (空文字列も可) で前方一致フィルタ *)
 let has_prefix ~prefix (s : string) : bool =
@@ -142,7 +112,7 @@ let complete (st : state) (input : string) (offset : int) : completion_item list
     | AtEof cp ->
       let pos = lexbuf.Lexing.lex_curr_p in
       acceptable_specs cp pos
-    | Fed _ | FeedError -> []
+    | Fed _ | FeedError _ -> []
   in
   (* 種別ごとに候補を展開 *)
   let items =

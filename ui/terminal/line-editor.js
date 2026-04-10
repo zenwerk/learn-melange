@@ -7,15 +7,14 @@ import { makeCell, writeCells } from './cell-buffer.js';
 const UNDERLINE_STYLE = { underline: true, dim: true };
 const PROMPT_STYLE = { fg: 'green', bold: true };
 
-// カーソル直前に連続する識別子文字 ([A-Za-z0-9_]) の開始位置を返す。
-// 最初の文字は [A-Za-z_] でなければならず、そうでない場合は offset を返す。
 // OCaml 側 Calc_language_service.find_prefix_start と挙動を揃えること。
+const RE_IDENT_CONT = /[A-Za-z0-9_]/;
+const RE_IDENT_START = /[A-Za-z_]/;
+
 function findPrefixStart(input, offset) {
-  const isCont = (ch) => /[A-Za-z0-9_]/.test(ch);
-  const isStart = (ch) => /[A-Za-z_]/.test(ch);
   let i = offset;
-  while (i > 0 && isCont(input[i - 1])) i--;
-  if (i < offset && isStart(input[i])) return i;
+  while (i > 0 && RE_IDENT_CONT.test(input[i - 1])) i--;
+  if (i < offset && RE_IDENT_START.test(input[i])) return i;
   return offset;
 }
 

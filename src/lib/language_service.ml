@@ -8,10 +8,16 @@
 
 type severity = Error | Warning | Info
 
+type completion_kind =
+  | CkKeyword
+  | CkVariable
+  | CkOperator
+  | CkFunction
+
 type completion_item = {
-  label : string;          (* 表示 & 挿入文字列 *)
-  kind : string;           (* "keyword" | "variable" | "operator" | ... *)
-  detail : string option;  (* 補助説明 (例: "float = 3.14") *)
+  label : string;               (* 表示 & 挿入文字列 *)
+  kind : completion_kind;
+  detail : string option;       (* 補助説明 (例: "float = 3.14") *)
 }
 
 type diagnostic = {

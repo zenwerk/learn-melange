@@ -18,6 +18,7 @@ const PROMPT = 'calc> ';
 const FONT_SIZE_DEFAULT = 14;
 const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 40;
+const TERMINAL_PAD = 12; // style.css #terminal-wrap の padding と合わせること
 
 const style = (fg, extra = null) => ({ fg, ...extra });
 const S = Object.freeze({
@@ -49,7 +50,7 @@ export class ReplUI {
       terminalCanvas: this.terminalCanvas,
       history: this.history,
       onSubmit: (line) => this.#handleSubmit(line),
-      onChange: (input, cursor) => this.#handleEditorChange(input, cursor),
+      onChange: () => this.#handleEditorChange(),
     });
 
     this.keyboard = new KeyboardInput({
@@ -162,21 +163,8 @@ export class ReplUI {
   #dispatch(action) {
     if (!this.awaitingInput) return;
 
-    // 補完ポップアップ関連の特殊アクション
-    if (action === 'completeNext') {
-      if (this.completionPopup.isVisible()) {
-        this.completionPopup.moveSelection(+1);
-      } else {
-        this.#triggerCompletion();
-      }
-      return;
-    }
-    if (action === 'completePrev') {
-      if (this.completionPopup.isVisible()) {
-        this.completionPopup.moveSelection(-1);
-      } else {
-        this.#triggerCompletion();
-      }
+    if (action === 'completeNext' || action === 'completePrev') {
+      this.#handleCompleteNav(action === 'completeNext' ? +1 : -1);
       return;
     }
     if (action === 'completeCancel') {
@@ -207,12 +195,16 @@ export class ReplUI {
     this.effects?.requestRender();
   }
 
-  #handleEditorChange(_input, _cursor) {
-    // 入力が変わったら補完ポップアップは一旦閉じる。
-    // auto-trigger をしたい場合はここで #triggerCompletion を呼ぶ。
+  #handleCompleteNav(delta) {
     if (this.completionPopup.isVisible()) {
-      this.completionPopup.hide();
+      this.completionPopup.moveSelection(delta);
+    } else {
+      this.#triggerCompletion();
     }
+  }
+
+  #handleEditorChange() {
+    this.completionPopup.hide();
   }
 
   #triggerCompletion() {
@@ -228,14 +220,11 @@ export class ReplUI {
     this.completionPopup.show(items, anchor.left, anchor.top);
   }
 
-  // CellBuffer (row, col) → 画面上のピクセル座標 (mount からの相対値)。
-  // #terminal-wrap の padding (style.css で 12px) + overlay canvas の位置。
   #cellToPixel(row, col) {
-    const pad = 12;
     const { cellWidth: cw, cellHeight: ch } = this.terminalCanvas;
     return {
-      left: pad + col * cw,
-      top: pad + row * ch,
+      left: TERMINAL_PAD + col * cw,
+      top: TERMINAL_PAD + row * ch,
     };
   }
 
@@ -298,9 +287,8 @@ export class ReplUI {
   // ------------- レイアウト -------------
 
   #relayout() {
-    const pad = 12;
-    const cw = this.mount.clientWidth - pad * 2;
-    const ch = this.mount.clientHeight - pad * 2;
+    const cw = this.mount.clientWidth - TERMINAL_PAD * 2;
+    const ch = this.mount.clientHeight - TERMINAL_PAD * 2;
     if (cw <= 0 || ch <= 0) return;
     const { rows, cols } = this.terminalCanvas.computeGrid(cw, ch);
     if (rows !== this.buffer.rows || cols !== this.buffer.cols) {

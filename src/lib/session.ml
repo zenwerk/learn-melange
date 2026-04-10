@@ -41,48 +41,7 @@ let make_error (msg : string) (col : int) : result_obj =
   }]
 
 module I = Parser.MenhirInterpreter
-
-(* Menhirのincremental APIでは、offer後にパーサーが内部的なシフト・リダクションを
-   複数回行うことがある。drainはそれらを消化して、外部入力が必要な状態まで進める。
-   これにより呼び出し側は「次のトークンを渡す」か「結果を受け取る」の2択に集中できる。 *)
-let rec drain (checkpoint : 'a I.checkpoint) : 'a I.checkpoint =
-  match checkpoint with
-  | I.Shifting _ | I.AboutToReduce _ ->
-    drain (I.resume checkpoint)
-  | _ -> checkpoint
-
-(* feed_tokensの戻り値型。EOFを特別扱いするのは、
-   push_parse（EOFを供給して完了させる）と get_acceptable_tokens（EOFの手前で
-   チェックポイントを検査する）で、EOF到達時の処理が異なるため。 *)
-type 'a feed_result =
-  | Fed of 'a
-  | AtEof of Ast.statement I.checkpoint
-  | FeedError of string * int
-
-(* lexbufからトークンを読み出してパーサーに供給する共通ループ。
-   EOFを供給せずAtEofとして返すことで、呼び出し側がEOF到達時の
-   振る舞いを自由に決定できるようにしている。 *)
-let rec feed_tokens lexbuf (cp : Ast.statement I.checkpoint) : Ast.statement feed_result =
-  match cp with
-  | I.InputNeeded _ ->
-    (try
-       let token = Lexer.token lexbuf in
-       if token = Parser.EOF then
-         AtEof cp
-       else
-         let startp = lexbuf.Lexing.lex_start_p in
-         let endp = lexbuf.Lexing.lex_curr_p in
-         feed_tokens lexbuf (drain (I.offer cp (token, startp, endp)))
-     with
-     | Lexer.Lexer_error (msg, pos) ->
-       FeedError (msg, pos.Lexing.pos_cnum))
-  | I.Accepted v -> Fed v
-  | I.HandlingError _ ->
-    let pos = lexbuf.Lexing.lex_curr_p in
-    FeedError ("Syntax error", pos.Lexing.pos_cnum)
-  | I.Rejected -> FeedError ("Syntax error", 0)
-  | I.Shifting _ | I.AboutToReduce _ ->
-    feed_tokens lexbuf (drain cp)
+open Parse_util
 
 (* 通常のパース。AtEofの場合はEOFトークンを明示的に供給して文法の終端を確定させる。
    incremental APIは自動的にEOFを処理しないため、手動で渡す必要がある。 *)
@@ -138,10 +97,16 @@ type completion_js = <
   detail : string Js.Nullable.t;
 > Js.t
 
+let completion_kind_to_string = function
+  | Language_service.CkKeyword -> "keyword"
+  | Language_service.CkVariable -> "variable"
+  | Language_service.CkOperator -> "operator"
+  | Language_service.CkFunction -> "function"
+
 let completion_to_js (item : Language_service.completion_item) : completion_js =
   [%mel.obj {
     label = item.label;
-    kind = item.kind;
+    kind = completion_kind_to_string item.kind;
     detail = (match item.detail with
               | Some s -> Js.Nullable.return s
               | None -> Js.Nullable.null);
@@ -224,30 +189,32 @@ let eval_input (env : Eval.env ref) (input_str : string) : result_obj =
    %mel.objはMelangeのPPXで、OCamlのレコードをJSオブジェクトに変換する。 *)
 let create_session () =
   let env = ref Eval.StringMap.empty in
-  let ls_state () : Calc_language_service.state =
-    Calc_language_service.with_env Calc_language_service.empty !env
-  in
+  let ls_state = ref Calc_language_service.empty in
+  let update_ls_state () = ls_state := Calc_language_service.of_env !env in
   [%mel.obj {
     eval = (fun (input : string) ->
       let input_str = String.trim input in
       if input_str = "" then
         make_error "Empty input" 0
-      else
-        eval_input env input_str);
+      else begin
+        let result = eval_input env input_str in
+        update_ls_state ();
+        result
+      end);
     hints = (fun (input : string) ->
       let input_str = String.trim input in
       get_acceptable_tokens input_str
       |> Array.of_list);
     complete = (fun (input : string) (offset : int) ->
-      Calc_language_service.complete (ls_state ()) input offset
+      Calc_language_service.complete (!ls_state) input offset
       |> List.map completion_to_js
       |> Array.of_list);
     diagnose = (fun (input : string) ->
-      Calc_language_service.diagnose (ls_state ()) input
+      Calc_language_service.diagnose (!ls_state) input
       |> List.map diagnostic_to_js
       |> Array.of_list);
     hover = (fun (input : string) (offset : int) ->
-      match Calc_language_service.hover (ls_state ()) input offset with
+      match Calc_language_service.hover (!ls_state) input offset with
       | Some h -> Js.Nullable.return (hover_to_js h)
       | None -> Js.Nullable.null);
     tokens = (fun (input : string) ->

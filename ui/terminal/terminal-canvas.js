@@ -2,7 +2,7 @@
 // 表示はしない (display:none) — WebGL テクスチャ元として使う。
 // セルサイズは measureText + ascent/descent から算出。
 
-const DEFAULT_THEME = Object.freeze({
+export const DEFAULT_THEME = Object.freeze({
   background: '#11111b',
   foreground: '#cdd6f4',
   cursor: '#a6e3a1',

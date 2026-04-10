@@ -1,26 +1,32 @@
 // 補完候補ポップアップ。
 // WebGL ポストエフェクトの外側に別 Canvas を 1 枚重ねて、
 // シャープな候補リストを描画する。
-//
-// 位置はターミナルのセル座標 (row, col) で指定し、TerminalCanvas の
-// cellWidth/cellHeight とマウントの padding から画面上のピクセル座標に変換する。
+
+import { DEFAULT_THEME } from '../terminal/terminal-canvas.js';
 
 const MAX_VISIBLE = 8;
 const PADDING_X = 6;
 const PADDING_Y = 4;
 const ROW_GAP = 2;
 
-const COLORS = {
+const T = DEFAULT_THEME;
+const COLORS = Object.freeze({
   background: 'rgba(24, 24, 37, 0.95)',
   border: 'rgba(137, 180, 250, 0.5)',
-  text: '#cdd6f4',
-  dim: '#6c7086',
+  text: T.foreground,
+  dim: T.colors.gray,
   selectedBg: 'rgba(137, 180, 250, 0.25)',
   selectedText: '#f5e0dc',
-  kindVariable: '#f9e2af',
+  kindVariable: T.colors.yellow,
   kindKeyword: '#cba6f7',
-  kindOperator: '#94e2d5',
-};
+  kindOperator: T.colors.cyan,
+});
+
+const KIND_COLOR = Object.freeze({
+  variable: COLORS.kindVariable,
+  keyword:  COLORS.kindKeyword,
+  operator: COLORS.kindOperator,
+});
 
 export class CompletionPopup {
   constructor({ host }) {
@@ -39,6 +45,12 @@ export class CompletionPopup {
     this.font = '12px monospace';
     this.lineHeight = 18;
     this.anchor = { left: 0, top: 0 };
+
+    // キャッシュ: show() 時に計算し、moveSelection では再計算しない
+    this._cachedWidthPx = 0;
+    this._cachedHeightPx = 0;
+    this._cachedLabelMax = 0;
+    this._cachedDetailMax = 0;
   }
 
   setFont(fontSize, fontFamily) {
@@ -71,6 +83,7 @@ export class CompletionPopup {
     this.anchor = { left: anchorLeftPx, top: anchorTopPx };
     this.visible = true;
     this.canvas.style.display = 'block';
+    this.#computeLayout();
     this.#render();
   }
 
@@ -81,32 +94,42 @@ export class CompletionPopup {
     this.#render();
   }
 
-  // ----- 描画 -----
-
-  #render() {
+  // measureText + canvas サイズを計算してキャッシュ
+  #computeLayout() {
     const ctx = this.ctx;
     ctx.font = this.font;
-    // 候補ラベル幅を計算
-    const labelWidths = this.items.map((it) => ctx.measureText(it.label).width);
-    const detailWidths = this.items.map((it) =>
-      it.detail ? ctx.measureText(it.detail).width : 0
-    );
-    const labelMax = Math.max(...labelWidths, 0);
-    const detailMax = Math.max(...detailWidths, 0);
+    let labelMax = 0;
+    let detailMax = 0;
+    for (const it of this.items) {
+      const lw = ctx.measureText(it.label).width;
+      if (lw > labelMax) labelMax = lw;
+      if (it.detail) {
+        const dw = ctx.measureText(it.detail).width;
+        if (dw > detailMax) detailMax = dw;
+      }
+    }
     const gap = detailMax > 0 ? 16 : 0;
-    const contentW = labelMax + gap + detailMax;
-    const widthPx = contentW + PADDING_X * 2;
-
+    const widthPx = labelMax + gap + detailMax + PADDING_X * 2;
     const rowCount = Math.min(this.items.length, MAX_VISIBLE);
     const heightPx = rowCount * (this.lineHeight + ROW_GAP) - ROW_GAP + PADDING_Y * 2;
 
-    // DPR 対応
+    this._cachedWidthPx = widthPx;
+    this._cachedHeightPx = heightPx;
+    this._cachedLabelMax = labelMax;
+    this._cachedDetailMax = detailMax;
+
     this.canvas.width = Math.ceil(widthPx * this.dpr);
     this.canvas.height = Math.ceil(heightPx * this.dpr);
     this.canvas.style.width = `${widthPx}px`;
     this.canvas.style.height = `${heightPx}px`;
     this.canvas.style.left = `${this.anchor.left}px`;
     this.canvas.style.top = `${this.anchor.top}px`;
+  }
+
+  #render() {
+    const ctx = this.ctx;
+    const widthPx = this._cachedWidthPx;
+    const heightPx = this._cachedHeightPx;
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.font = this.font;
@@ -119,14 +142,14 @@ export class CompletionPopup {
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, widthPx - 1, heightPx - 1);
 
-    // 表示開始インデックス (選択が外に出ないようスクロール)
+    // スクロール: 選択行が範囲外に出ないようにする
     let start = 0;
     if (this.selection >= MAX_VISIBLE) {
       start = this.selection - MAX_VISIBLE + 1;
     }
-    const end = Math.min(this.items.length, start + MAX_VISIBLE);
+    const end_ = Math.min(this.items.length, start + MAX_VISIBLE);
 
-    for (let i = start; i < end; i++) {
+    for (let i = start; i < end_; i++) {
       const item = this.items[i];
       const rowIdx = i - start;
       const y = PADDING_Y + rowIdx * (this.lineHeight + ROW_GAP);
@@ -137,27 +160,14 @@ export class CompletionPopup {
         ctx.fillRect(2, y, widthPx - 4, this.lineHeight);
       }
 
-      // ラベル (種別で色分け)
-      ctx.fillStyle = isSel
-        ? COLORS.selectedText
-        : kindColor(item.kind);
+      ctx.fillStyle = isSel ? COLORS.selectedText : (KIND_COLOR[item.kind] ?? COLORS.text);
       ctx.fillText(item.label, PADDING_X, y + this.lineHeight / 2);
 
-      // 詳細 (右寄せ、dim)
       if (item.detail) {
         ctx.fillStyle = COLORS.dim;
         const detailX = widthPx - PADDING_X - ctx.measureText(item.detail).width;
         ctx.fillText(item.detail, detailX, y + this.lineHeight / 2);
       }
     }
-  }
-}
-
-function kindColor(kind) {
-  switch (kind) {
-    case 'variable': return COLORS.kindVariable;
-    case 'keyword':  return COLORS.kindKeyword;
-    case 'operator': return COLORS.kindOperator;
-    default:         return COLORS.text;
   }
 }
