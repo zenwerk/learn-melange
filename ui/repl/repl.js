@@ -63,7 +63,7 @@ export class ReplUI {
 
     this.session = create_session();
     this.languageClient = createLanguageClient(this.session);
-    this.completionPopup = new CompletionPopup({ host: mount });
+    this.completionPopup = new CompletionPopup({ buffer: this.buffer });
     this.effects = null; // フォント読み込み後に生成
     this.fontSize = FONT_SIZE_DEFAULT;
 
@@ -77,7 +77,6 @@ export class ReplUI {
     // Web フォント待ち (失敗しても monospace で続行)
     try { await document.fonts.ready; } catch { /* noop */ }
     this.terminalCanvas.setFontSize(this.fontSize);
-    this.completionPopup.setFont(this.fontSize, this.terminalCanvas.fontFamily);
     this.#relayout();
 
     // エフェクトマネージャ初期化 (overlay canvas サイズは relayout で整った)
@@ -169,6 +168,7 @@ export class ReplUI {
     }
     if (action === 'completeCancel') {
       this.completionPopup.hide();
+      this.effects?.requestRender();
       return;
     }
     // ポップアップが出ている状態で Enter → 候補を確定、元の submit は行わない
@@ -198,13 +198,17 @@ export class ReplUI {
   #handleCompleteNav(delta) {
     if (this.completionPopup.isVisible()) {
       this.completionPopup.moveSelection(delta);
+      this.effects?.requestRender();
     } else {
       this.#triggerCompletion();
     }
   }
 
   #handleEditorChange() {
-    this.completionPopup.hide();
+    if (this.completionPopup.isVisible()) {
+      this.completionPopup.hide();
+      this.effects?.requestRender();
+    }
   }
 
   #triggerCompletion() {
@@ -213,19 +217,10 @@ export class ReplUI {
     const items = this.languageClient.completeSync(input, offset);
     if (!items || items.length === 0) return;
 
-    // アンカーはプロンプト行の接頭辞開始位置 (セル座標 → ピクセル座標)
-    const row = this.editor.row;
+    const row = this.editor.row + 1; // 入力行の下に表示
     const col = this.editor.prefixStartCol();
-    const anchor = this.#cellToPixel(row + 1, col); // 次の行の頭に出す
-    this.completionPopup.show(items, anchor.left, anchor.top);
-  }
-
-  #cellToPixel(row, col) {
-    const { cellWidth: cw, cellHeight: ch } = this.terminalCanvas;
-    return {
-      left: TERMINAL_PAD + col * cw,
-      top: TERMINAL_PAD + row * ch,
-    };
+    this.completionPopup.show(items, row, col);
+    this.effects?.requestRender();
   }
 
   #handleCompose(ev) {
@@ -279,7 +274,6 @@ export class ReplUI {
     if (clamped === this.fontSize) return;
     this.fontSize = clamped;
     this.terminalCanvas.setFontSize(clamped);
-    this.completionPopup.setFont(clamped, this.terminalCanvas.fontFamily);
     this.completionPopup.hide();
     this.#relayout();
   }

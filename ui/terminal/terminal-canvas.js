@@ -117,6 +117,15 @@ export class TerminalCanvas {
       for (let c = 0; c < buffer.cols; c++) {
         const cell = row[c];
         if (!cell || cell.ch === null) continue;
+
+        // セル個別の背景色 (補完ポップアップ等で使用)
+        const bg = cell.style?.bg;
+        if (bg) {
+          const cellW = cw * (cell.width === 2 ? 2 : 1);
+          ctx.fillStyle = theme.colors[bg] ?? bg;
+          ctx.fillRect(c * cw, r * ch, cellW, ch);
+        }
+
         if (cell.ch === ' ') continue;
         ctx.fillStyle = resolveFg(cell.style, theme);
         // セル矩形に clip してグリフの上下はみ出しを切り落とす

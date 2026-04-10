@@ -1,59 +1,55 @@
-// 補完候補ポップアップ。
-// WebGL ポストエフェクトの外側に別 Canvas を 1 枚重ねて、
-// シャープな候補リストを描画する。
+// 補完候補ポップアップ (CellBuffer 直書き方式)。
+// CellBuffer に候補テキストを直接書き込むことで、CRT ポストエフェクトの
+// 対象となりターミナル本体と同じ質感で表示される。
+// show/hide 時に対象行のセルを退避・復元する。
 
-import { DEFAULT_THEME } from '../terminal/terminal-canvas.js';
+import { makeCell, writeCells } from '../terminal/cell-buffer.js';
 
 const MAX_VISIBLE = 8;
-const PADDING_X = 6;
-const PADDING_Y = 4;
-const ROW_GAP = 2;
 
-const T = DEFAULT_THEME;
-const COLORS = Object.freeze({
-  background: 'rgba(24, 24, 37, 0.95)',
-  border: 'rgba(137, 180, 250, 0.5)',
-  text: T.foreground,
-  dim: T.colors.gray,
-  selectedBg: 'rgba(137, 180, 250, 0.25)',
-  selectedText: '#f5e0dc',
-  kindVariable: T.colors.yellow,
-  kindKeyword: '#cba6f7',
-  kindOperator: T.colors.cyan,
-});
+// ポップアップ内のスタイル定義 (TerminalCanvas の resolveFg で解決される)
+const POPUP_BG = '#1e1e2e';               // 通常行背景 (直接 CSS カラー)
+const SELECTED_BG = '#313244';            // 選択行背景
+const STYLE_LABEL_VAR = { fg: 'yellow' };
+const STYLE_LABEL_KW  = { fg: 'magenta' };
+const STYLE_LABEL_OP  = { fg: 'cyan' };
+const STYLE_LABEL_DEF = null;
+const STYLE_DETAIL    = { dim: true };
+const STYLE_SELECTED_VAR = { fg: 'yellow', bg: SELECTED_BG };
+const STYLE_SELECTED_KW  = { fg: 'magenta', bg: SELECTED_BG };
+const STYLE_SELECTED_OP  = { fg: 'cyan', bg: SELECTED_BG };
+const STYLE_SELECTED_DEF = { bg: SELECTED_BG };
+const STYLE_DETAIL_SEL   = { dim: true, bg: SELECTED_BG };
 
-const KIND_COLOR = Object.freeze({
-  variable: COLORS.kindVariable,
-  keyword:  COLORS.kindKeyword,
-  operator: COLORS.kindOperator,
-});
+const KIND_STYLE = {
+  variable: STYLE_LABEL_VAR,
+  keyword:  STYLE_LABEL_KW,
+  operator: STYLE_LABEL_OP,
+};
+const KIND_STYLE_SEL = {
+  variable: STYLE_SELECTED_VAR,
+  keyword:  STYLE_SELECTED_KW,
+  operator: STYLE_SELECTED_OP,
+};
 
 export class CompletionPopup {
-  constructor({ host }) {
-    this.host = host;
-    this.canvas = document.createElement('canvas');
-    this.canvas.className = 'completion-popup';
-    this.canvas.style.cssText =
-      'position:absolute;left:0;top:0;pointer-events:none;display:none;z-index:10;';
-    this.ctx = this.canvas.getContext('2d');
-    host.appendChild(this.canvas);
+  constructor({ buffer }) {
+    this.buffer = buffer;
 
-    this.dpr = window.devicePixelRatio || 1;
     this.items = [];
     this.selection = 0;
     this.visible = false;
-    this.font = '12px monospace';
-    this.lineHeight = 18;
-    this.anchor = { left: 0, top: 0 };
 
-    // キャッシュ: show() 時に計算し、moveSelection では再計算しない
-    this._cachedWidthPx = 0;
-    this._cachedHeightPx = 0;
-  }
+    // ポップアップの左上アンカー (CellBuffer のセル座標)
+    this.anchorRow = 0;
+    this.anchorCol = 0;
 
-  setFont(fontSize, fontFamily) {
-    this.font = `${fontSize}px ${fontFamily}`;
-    this.lineHeight = Math.ceil(fontSize * 1.35);
+    // ポップアップが占有する行数と列数 (show 時に計算)
+    this.popupRows = 0;
+    this.popupCols = 0;
+
+    // 退避したセルデータ。show 前の状態に戻すのに使う。
+    this._savedCells = null;
   }
 
   isVisible() {
@@ -67,21 +63,30 @@ export class CompletionPopup {
 
   hide() {
     if (!this.visible) return;
+    this.#restoreCells();
     this.visible = false;
-    this.canvas.style.display = 'none';
   }
 
-  show(items, anchorLeftPx, anchorTopPx) {
+  show(items, anchorRow, anchorCol) {
     if (!items || items.length === 0) {
       this.hide();
       return;
     }
+
+    // 既にポップアップが出ていた場合は先に復元
+    if (this.visible) this.#restoreCells();
+
     this.items = items;
     this.selection = 0;
-    this.anchor = { left: anchorLeftPx, top: anchorTopPx };
-    this.visible = true;
-    this.canvas.style.display = 'block';
+    this.anchorRow = anchorRow;
+    this.anchorCol = anchorCol;
+
+    // レイアウト計算
     this.#computeLayout();
+    // 対象行のセルを退避
+    this.#saveCells();
+    // 描画
+    this.visible = true;
     this.#render();
   }
 
@@ -92,52 +97,72 @@ export class CompletionPopup {
     this.#render();
   }
 
-  // measureText + canvas サイズを計算してキャッシュ
+  // ----- レイアウト -----
+
   #computeLayout() {
-    const ctx = this.ctx;
-    ctx.font = this.font;
+    // 候補のラベル最大幅 + detail 幅を文字数で計算
     let labelMax = 0;
     let detailMax = 0;
     for (const it of this.items) {
-      const lw = ctx.measureText(it.label).width;
-      if (lw > labelMax) labelMax = lw;
-      if (it.detail) {
-        const dw = ctx.measureText(it.detail).width;
-        if (dw > detailMax) detailMax = dw;
-      }
+      if (it.label.length > labelMax) labelMax = it.label.length;
+      if (it.detail && it.detail.length > detailMax) detailMax = it.detail.length;
     }
-    const gap = detailMax > 0 ? 16 : 0;
-    const widthPx = labelMax + gap + detailMax + PADDING_X * 2;
-    const rowCount = Math.min(this.items.length, MAX_VISIBLE);
-    const heightPx = rowCount * (this.lineHeight + ROW_GAP) - ROW_GAP + PADDING_Y * 2;
+    const gap = detailMax > 0 ? 2 : 0;
+    // 左右に 1 セルずつ余白
+    this.popupCols = 1 + labelMax + gap + detailMax + 1;
+    this.popupRows = Math.min(this.items.length, MAX_VISIBLE);
 
-    this._cachedWidthPx = widthPx;
-    this._cachedHeightPx = heightPx;
+    // 画面右端を超える場合は左にずらす
+    if (this.anchorCol + this.popupCols > this.buffer.cols) {
+      this.anchorCol = Math.max(0, this.buffer.cols - this.popupCols);
+    }
+    // 画面下端を超える場合は上にずらす
+    if (this.anchorRow + this.popupRows > this.buffer.rows) {
+      this.anchorRow = Math.max(0, this.buffer.rows - this.popupRows);
+    }
 
-    this.canvas.width = Math.ceil(widthPx * this.dpr);
-    this.canvas.height = Math.ceil(heightPx * this.dpr);
-    this.canvas.style.width = `${widthPx}px`;
-    this.canvas.style.height = `${heightPx}px`;
-    this.canvas.style.left = `${this.anchor.left}px`;
-    this.canvas.style.top = `${this.anchor.top}px`;
+    this._labelMax = labelMax;
+    this._detailMax = detailMax;
+    this._gap = gap;
   }
 
+  // ----- セル退避・復元 -----
+
+  #saveCells() {
+    const saved = [];
+    for (let r = 0; r < this.popupRows; r++) {
+      const row = this.anchorRow + r;
+      if (row >= this.buffer.rows) break;
+      const rowCells = [];
+      for (let c = 0; c < this.popupCols; c++) {
+        const col = this.anchorCol + c;
+        if (col >= this.buffer.cols) break;
+        const cell = this.buffer.grid[row][col];
+        rowCells.push({ ...cell });
+      }
+      saved.push(rowCells);
+    }
+    this._savedCells = saved;
+  }
+
+  #restoreCells() {
+    if (!this._savedCells) return;
+    for (let r = 0; r < this._savedCells.length; r++) {
+      const row = this.anchorRow + r;
+      if (row >= this.buffer.rows) break;
+      const rowCells = this._savedCells[r];
+      for (let c = 0; c < rowCells.length; c++) {
+        const col = this.anchorCol + c;
+        if (col >= this.buffer.cols) break;
+        this.buffer.set(row, col, rowCells[c]);
+      }
+    }
+    this._savedCells = null;
+  }
+
+  // ----- 描画 -----
+
   #render() {
-    const ctx = this.ctx;
-    const widthPx = this._cachedWidthPx;
-    const heightPx = this._cachedHeightPx;
-
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.font = this.font;
-    ctx.textBaseline = 'middle';
-
-    // 背景
-    ctx.fillStyle = COLORS.background;
-    ctx.fillRect(0, 0, widthPx, heightPx);
-    ctx.strokeStyle = COLORS.border;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(0.5, 0.5, widthPx - 1, heightPx - 1);
-
     // スクロール: 選択行が範囲外に出ないようにする
     let start = 0;
     if (this.selection >= MAX_VISIBLE) {
@@ -148,21 +173,31 @@ export class CompletionPopup {
     for (let i = start; i < end_; i++) {
       const item = this.items[i];
       const rowIdx = i - start;
-      const y = PADDING_Y + rowIdx * (this.lineHeight + ROW_GAP);
-      const isSel = i === this.selection;
+      const bufRow = this.anchorRow + rowIdx;
+      if (bufRow >= this.buffer.rows) break;
 
-      if (isSel) {
-        ctx.fillStyle = COLORS.selectedBg;
-        ctx.fillRect(2, y, widthPx - 4, this.lineHeight);
+      const isSel = i === this.selection;
+      const bgColor = isSel ? SELECTED_BG : POPUP_BG;
+      const labelStyle = isSel
+        ? (KIND_STYLE_SEL[item.kind] ?? STYLE_SELECTED_DEF)
+        : (KIND_STYLE[item.kind] ?? STYLE_LABEL_DEF);
+      const detailStyle = isSel ? STYLE_DETAIL_SEL : STYLE_DETAIL;
+
+      // 行全体をポップアップ背景で塗る
+      for (let c = 0; c < this.popupCols; c++) {
+        const col = this.anchorCol + c;
+        if (col >= this.buffer.cols) break;
+        this.buffer.set(bufRow, col, makeCell(' ', { bg: bgColor }, 1));
       }
 
-      ctx.fillStyle = isSel ? COLORS.selectedText : (KIND_COLOR[item.kind] ?? COLORS.text);
-      ctx.fillText(item.label, PADDING_X, y + this.lineHeight / 2);
+      // ラベルを書き込み (左余白 1 セル)
+      let col = this.anchorCol + 1;
+      writeCells(this.buffer, bufRow, col, item.label, labelStyle);
 
+      // detail を右寄せ (右余白 1 セル)
       if (item.detail) {
-        ctx.fillStyle = COLORS.dim;
-        const detailX = widthPx - PADDING_X - ctx.measureText(item.detail).width;
-        ctx.fillText(item.detail, detailX, y + this.lineHeight / 2);
+        const detailCol = this.anchorCol + this.popupCols - 1 - item.detail.length;
+        writeCells(this.buffer, bufRow, detailCol, item.detail, detailStyle);
       }
     }
   }
