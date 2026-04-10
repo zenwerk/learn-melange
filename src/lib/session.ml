@@ -40,7 +40,6 @@ let make_error (msg : string) (col : int) : result_obj =
     error_column = Js.Nullable.return col;
   }]
 
-module I = Parser.MenhirInterpreter
 open Parse_util
 
 (* 通常のパース。AtEofの場合はEOFトークンを明示的に供給して文法の終端を確定させる。

@@ -41,7 +41,6 @@ let find_prefix_start (input : string) (offset : int) : int =
   if start < off && is_ident_start input.[start] then start
   else off
 
-module I = Parser.MenhirInterpreter
 open Parse_util
 
 (* token kind ラベルと「候補に展開するときの表示名・詳細」を対応づける。

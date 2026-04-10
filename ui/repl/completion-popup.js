@@ -49,8 +49,6 @@ export class CompletionPopup {
     // キャッシュ: show() 時に計算し、moveSelection では再計算しない
     this._cachedWidthPx = 0;
     this._cachedHeightPx = 0;
-    this._cachedLabelMax = 0;
-    this._cachedDetailMax = 0;
   }
 
   setFont(fontSize, fontFamily) {
@@ -115,8 +113,6 @@ export class CompletionPopup {
 
     this._cachedWidthPx = widthPx;
     this._cachedHeightPx = heightPx;
-    this._cachedLabelMax = labelMax;
-    this._cachedDetailMax = detailMax;
 
     this.canvas.width = Math.ceil(widthPx * this.dpr);
     this.canvas.height = Math.ceil(heightPx * this.dpr);
