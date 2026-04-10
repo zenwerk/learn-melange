@@ -7,12 +7,25 @@ import { makeCell, writeCells } from './cell-buffer.js';
 const UNDERLINE_STYLE = { underline: true, dim: true };
 const PROMPT_STYLE = { fg: 'green', bold: true };
 
+// カーソル直前に連続する識別子文字 ([A-Za-z0-9_]) の開始位置を返す。
+// 最初の文字は [A-Za-z_] でなければならず、そうでない場合は offset を返す。
+// OCaml 側 Calc_language_service.find_prefix_start と挙動を揃えること。
+function findPrefixStart(input, offset) {
+  const isCont = (ch) => /[A-Za-z0-9_]/.test(ch);
+  const isStart = (ch) => /[A-Za-z_]/.test(ch);
+  let i = offset;
+  while (i > 0 && isCont(input[i - 1])) i--;
+  if (i < offset && isStart(input[i])) return i;
+  return offset;
+}
+
 export class LineEditor {
-  constructor({ buffer, terminalCanvas, history, onSubmit }) {
+  constructor({ buffer, terminalCanvas, history, onSubmit, onChange }) {
     this.buffer = buffer;
     this.canvas = terminalCanvas;
     this.history = history;
     this.onSubmit = onSubmit;
+    this.onChange = onChange; // (input, cursor) => void — 編集のたびに呼ぶ
 
     this.prompt = '';
     this.input = '';
@@ -36,6 +49,22 @@ export class LineEditor {
 
   value() {
     return this.input;
+  }
+
+  // カーソルが CellBuffer 上のどの列にあるか (プロンプト + 入力幅)。
+  // 補完ポップアップのアンカー座標を決めるために repl 側が使う。
+  cursorCol() {
+    return this.promptCol + strWidthRange(this.input, 0, this.cursor);
+  }
+
+  // カーソル直前の識別子接頭辞の開始位置 (buffer 上の列)。
+  prefixStartCol() {
+    const start = findPrefixStart(this.input, this.cursor);
+    return this.promptCol + strWidthRange(this.input, 0, start);
+  }
+
+  cursorOffset() {
+    return this.cursor;
   }
 
   // ----- 編集アクション -----
@@ -136,6 +165,17 @@ export class LineEditor {
     this.onSubmit?.(line);
   }
 
+  // カーソル左にある「接頭辞 (識別子文字の連続)」を item.label で置き換える。
+  // 識別子でない補完 (演算子 "+" 等) の場合は接頭辞なしで単純挿入。
+  acceptCompletion(item) {
+    if (!item) return;
+    const start = findPrefixStart(this.input, this.cursor);
+    this.input = this.input.slice(0, start) + item.label + this.input.slice(this.cursor);
+    this.cursor = start + item.label.length;
+    this.history.resetCursor(this.input);
+    this.#commit();
+  }
+
   setComposing(text) {
     this.composing = text;
     this.#commit();
@@ -158,6 +198,7 @@ export class LineEditor {
   #commit() {
     this.#renderInput();
     this.#placeCursor();
+    this.onChange?.(this.input, this.cursor);
   }
 
   #clearLine() {

@@ -11,6 +11,8 @@ import { History } from '../terminal/history.js';
 import { KeyboardInput } from '../terminal/keyboard-input.js';
 import { EffectManager } from '../effects/effect-manager.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
+import { createLanguageClient } from '../language/language-client.js';
+import { CompletionPopup } from './completion-popup.js';
 
 const PROMPT = 'calc> ';
 const FONT_SIZE_DEFAULT = 14;
@@ -47,6 +49,7 @@ export class ReplUI {
       terminalCanvas: this.terminalCanvas,
       history: this.history,
       onSubmit: (line) => this.#handleSubmit(line),
+      onChange: (input, cursor) => this.#handleEditorChange(input, cursor),
     });
 
     this.keyboard = new KeyboardInput({
@@ -58,6 +61,8 @@ export class ReplUI {
     });
 
     this.session = create_session();
+    this.languageClient = createLanguageClient(this.session);
+    this.completionPopup = new CompletionPopup({ host: mount });
     this.effects = null; // フォント読み込み後に生成
     this.fontSize = FONT_SIZE_DEFAULT;
 
@@ -71,6 +76,7 @@ export class ReplUI {
     // Web フォント待ち (失敗しても monospace で続行)
     try { await document.fonts.ready; } catch { /* noop */ }
     this.terminalCanvas.setFontSize(this.fontSize);
+    this.completionPopup.setFont(this.fontSize, this.terminalCanvas.fontFamily);
     this.#relayout();
 
     // エフェクトマネージャ初期化 (overlay canvas サイズは relayout で整った)
@@ -145,6 +151,7 @@ export class ReplUI {
 
   #handleSubmit(line) {
     this.awaitingInput = false;
+    this.completionPopup.hide();
     // エディタが最後に書いた行の 1 つ先へ
     this.#newline();
     const r = this.submitResolve;
@@ -153,9 +160,83 @@ export class ReplUI {
   }
 
   #dispatch(action) {
-    if (!this.awaitingInput || !this.editor[action]) return;
+    if (!this.awaitingInput) return;
+
+    // 補完ポップアップ関連の特殊アクション
+    if (action === 'completeNext') {
+      if (this.completionPopup.isVisible()) {
+        this.completionPopup.moveSelection(+1);
+      } else {
+        this.#triggerCompletion();
+      }
+      return;
+    }
+    if (action === 'completePrev') {
+      if (this.completionPopup.isVisible()) {
+        this.completionPopup.moveSelection(-1);
+      } else {
+        this.#triggerCompletion();
+      }
+      return;
+    }
+    if (action === 'completeCancel') {
+      this.completionPopup.hide();
+      return;
+    }
+    // ポップアップが出ている状態で Enter → 候補を確定、元の submit は行わない
+    if (action === 'submit' && this.completionPopup.isVisible()) {
+      const item = this.completionPopup.currentItem();
+      this.completionPopup.hide();
+      if (item) {
+        this.editor.acceptCompletion(item);
+      }
+      this.effects?.requestRender();
+      return;
+    }
+
+    if (!this.editor[action]) return;
     this.editor[action]();
+    // カーソル移動だけのアクション (moveLeft/moveRight/moveHome/moveEnd/...) でも
+    // ポップアップが出ていれば閉じる (カーソルが離れると候補が無効になるため)
+    if (
+      this.completionPopup.isVisible() &&
+      (action.startsWith('move') || action.startsWith('history'))
+    ) {
+      this.completionPopup.hide();
+    }
     this.effects?.requestRender();
+  }
+
+  #handleEditorChange(_input, _cursor) {
+    // 入力が変わったら補完ポップアップは一旦閉じる。
+    // auto-trigger をしたい場合はここで #triggerCompletion を呼ぶ。
+    if (this.completionPopup.isVisible()) {
+      this.completionPopup.hide();
+    }
+  }
+
+  #triggerCompletion() {
+    const input = this.editor.value();
+    const offset = this.editor.cursorOffset();
+    const items = this.languageClient.completeSync(input, offset);
+    if (!items || items.length === 0) return;
+
+    // アンカーはプロンプト行の接頭辞開始位置 (セル座標 → ピクセル座標)
+    const row = this.editor.row;
+    const col = this.editor.prefixStartCol();
+    const anchor = this.#cellToPixel(row + 1, col); // 次の行の頭に出す
+    this.completionPopup.show(items, anchor.left, anchor.top);
+  }
+
+  // CellBuffer (row, col) → 画面上のピクセル座標 (mount からの相対値)。
+  // #terminal-wrap の padding (style.css で 12px) + overlay canvas の位置。
+  #cellToPixel(row, col) {
+    const pad = 12;
+    const { cellWidth: cw, cellHeight: ch } = this.terminalCanvas;
+    return {
+      left: pad + col * cw,
+      top: pad + row * ch,
+    };
   }
 
   #handleCompose(ev) {
@@ -193,6 +274,7 @@ export class ReplUI {
   }
 
   #clearScreen() {
+    this.completionPopup.hide();
     this.buffer.clear();
     this.cursorRow = 0;
     if (this.awaitingInput) {
@@ -208,6 +290,8 @@ export class ReplUI {
     if (clamped === this.fontSize) return;
     this.fontSize = clamped;
     this.terminalCanvas.setFontSize(clamped);
+    this.completionPopup.setFont(clamped, this.terminalCanvas.fontFamily);
+    this.completionPopup.hide();
     this.#relayout();
   }
 
@@ -238,7 +322,7 @@ export class ReplUI {
     this.#println([{ text: 'Melange Calculator REPL', style: S.greenBold }]);
     this.#println([{
       text: 'readline: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n ↑↓  /' +
-            ' clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e',
+            ' complete: Tab S-Tab Esc  / clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e',
       style: S.dim,
     }]);
     this.#println('');

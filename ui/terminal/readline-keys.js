@@ -11,6 +11,8 @@ const ACTIONS = {
   'ArrowDown':  'historyNext',
   'Home':       'moveHome',
   'End':        'moveEnd',
+  'Tab':        'completeNext',
+  'Escape':     'completeCancel',
 };
 
 const CTRL = {
@@ -41,5 +43,7 @@ export function resolveKey(e) {
     const k = e.key.toLowerCase();
     return META[k] ?? null;
   }
+  // Shift+Tab: 前候補へ
+  if (e.key === 'Tab' && e.shiftKey) return 'completePrev';
   return ACTIONS[e.key] ?? null;
 }

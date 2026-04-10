@@ -1,4 +1,6 @@
 import { ReplUI } from './repl/repl.js';
 
 const mount = document.getElementById('terminal-wrap');
-await new ReplUI({ mount }).run();
+const repl = new ReplUI({ mount });
+window.repl = repl; // デバッグ/検証用
+repl.run();
