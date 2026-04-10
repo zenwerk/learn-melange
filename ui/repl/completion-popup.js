@@ -7,30 +7,17 @@ import { makeCell, writeCells } from '../terminal/cell-buffer.js';
 
 const MAX_VISIBLE = 8;
 
-// ポップアップ内のスタイル定義 (TerminalCanvas の resolveFg で解決される)
-const POPUP_BG = '#1e1e2e';               // 通常行背景 (直接 CSS カラー)
-const SELECTED_BG = '#313244';            // 選択行背景
-const STYLE_LABEL_VAR = { fg: 'yellow' };
-const STYLE_LABEL_KW  = { fg: 'magenta' };
-const STYLE_LABEL_OP  = { fg: 'cyan' };
-const STYLE_LABEL_DEF = null;
-const STYLE_DETAIL    = { dim: true };
-const STYLE_SELECTED_VAR = { fg: 'yellow', bg: SELECTED_BG };
-const STYLE_SELECTED_KW  = { fg: 'magenta', bg: SELECTED_BG };
-const STYLE_SELECTED_OP  = { fg: 'cyan', bg: SELECTED_BG };
-const STYLE_SELECTED_DEF = { bg: SELECTED_BG };
-const STYLE_DETAIL_SEL   = { dim: true, bg: SELECTED_BG };
+const POPUP_BG = '#1e1e2e';
+const SELECTED_BG = '#313244';
+const STYLE_DETAIL = { dim: true };
 
 const KIND_STYLE = {
-  variable: STYLE_LABEL_VAR,
-  keyword:  STYLE_LABEL_KW,
-  operator: STYLE_LABEL_OP,
+  variable: { fg: 'yellow' },
+  keyword:  { fg: 'magenta' },
+  operator: { fg: 'cyan' },
 };
-const KIND_STYLE_SEL = {
-  variable: STYLE_SELECTED_VAR,
-  keyword:  STYLE_SELECTED_KW,
-  operator: STYLE_SELECTED_OP,
-};
+
+const withBg = (style, bg) => style ? { ...style, bg } : { bg };
 
 export class CompletionPopup {
   constructor({ buffer }) {
@@ -40,15 +27,13 @@ export class CompletionPopup {
     this.selection = 0;
     this.visible = false;
 
-    // ポップアップの左上アンカー (CellBuffer のセル座標)
     this.anchorRow = 0;
     this.anchorCol = 0;
-
-    // ポップアップが占有する行数と列数 (show 時に計算)
     this.popupRows = 0;
     this.popupCols = 0;
 
-    // 退避したセルデータ。show 前の状態に戻すのに使う。
+    // show 前の元セルを保持。hide で復元する。
+    // moveSelection 中は書き戻し→再描画で使い回す。
     this._savedCells = null;
   }
 
@@ -64,6 +49,7 @@ export class CompletionPopup {
   hide() {
     if (!this.visible) return;
     this.#restoreCells();
+    this._savedCells = null;
     this.visible = false;
   }
 
@@ -74,18 +60,18 @@ export class CompletionPopup {
     }
 
     // 既にポップアップが出ていた場合は先に復元
-    if (this.visible) this.#restoreCells();
+    if (this.visible) {
+      this.#restoreCells();
+      this._savedCells = null;
+    }
 
     this.items = items;
     this.selection = 0;
     this.anchorRow = anchorRow;
     this.anchorCol = anchorCol;
 
-    // レイアウト計算
     this.#computeLayout();
-    // 対象行のセルを退避
     this.#saveCells();
-    // 描画
     this.visible = true;
     this.#render();
   }
@@ -94,13 +80,14 @@ export class CompletionPopup {
     if (!this.visible || this.items.length === 0) return;
     const n = this.items.length;
     this.selection = (this.selection + delta + n) % n;
+    // savedCells から復元してから再描画 (savedCells 自体は保持)
+    this.#restoreCells();
     this.#render();
   }
 
   // ----- レイアウト -----
 
   #computeLayout() {
-    // 候補のラベル最大幅 + detail 幅を文字数で計算
     let labelMax = 0;
     let detailMax = 0;
     for (const it of this.items) {
@@ -108,22 +95,16 @@ export class CompletionPopup {
       if (it.detail && it.detail.length > detailMax) detailMax = it.detail.length;
     }
     const gap = detailMax > 0 ? 2 : 0;
-    // 左右に 1 セルずつ余白
     this.popupCols = 1 + labelMax + gap + detailMax + 1;
     this.popupRows = Math.min(this.items.length, MAX_VISIBLE);
 
-    // 画面右端を超える場合は左にずらす
+    // 画面端に収まるようアンカーを調整
     if (this.anchorCol + this.popupCols > this.buffer.cols) {
       this.anchorCol = Math.max(0, this.buffer.cols - this.popupCols);
     }
-    // 画面下端を超える場合は上にずらす
     if (this.anchorRow + this.popupRows > this.buffer.rows) {
       this.anchorRow = Math.max(0, this.buffer.rows - this.popupRows);
     }
-
-    this._labelMax = labelMax;
-    this._detailMax = detailMax;
-    this._gap = gap;
   }
 
   // ----- セル退避・復元 -----
@@ -137,8 +118,7 @@ export class CompletionPopup {
       for (let c = 0; c < this.popupCols; c++) {
         const col = this.anchorCol + c;
         if (col >= this.buffer.cols) break;
-        const cell = this.buffer.grid[row][col];
-        rowCells.push({ ...cell });
+        rowCells.push({ ...this.buffer.grid[row][col] });
       }
       saved.push(rowCells);
     }
@@ -154,16 +134,14 @@ export class CompletionPopup {
       for (let c = 0; c < rowCells.length; c++) {
         const col = this.anchorCol + c;
         if (col >= this.buffer.cols) break;
-        this.buffer.set(row, col, rowCells[c]);
+        this.buffer.set(row, col, { ...rowCells[c] });
       }
     }
-    this._savedCells = null;
   }
 
   // ----- 描画 -----
 
   #render() {
-    // スクロール: 選択行が範囲外に出ないようにする
     let start = 0;
     if (this.selection >= MAX_VISIBLE) {
       start = this.selection - MAX_VISIBLE + 1;
@@ -178,10 +156,9 @@ export class CompletionPopup {
 
       const isSel = i === this.selection;
       const bgColor = isSel ? SELECTED_BG : POPUP_BG;
-      const labelStyle = isSel
-        ? (KIND_STYLE_SEL[item.kind] ?? STYLE_SELECTED_DEF)
-        : (KIND_STYLE[item.kind] ?? STYLE_LABEL_DEF);
-      const detailStyle = isSel ? STYLE_DETAIL_SEL : STYLE_DETAIL;
+      const baseStyle = KIND_STYLE[item.kind] ?? null;
+      const labelStyle = isSel ? withBg(baseStyle, SELECTED_BG) : baseStyle;
+      const detailStyle = isSel ? withBg(STYLE_DETAIL, SELECTED_BG) : STYLE_DETAIL;
 
       // 行全体をポップアップ背景で塗る
       for (let c = 0; c < this.popupCols; c++) {
@@ -190,11 +167,10 @@ export class CompletionPopup {
         this.buffer.set(bufRow, col, makeCell(' ', { bg: bgColor }, 1));
       }
 
-      // ラベルを書き込み (左余白 1 セル)
-      let col = this.anchorCol + 1;
-      writeCells(this.buffer, bufRow, col, item.label, labelStyle);
+      // ラベル (左余白 1 セル)
+      writeCells(this.buffer, bufRow, this.anchorCol + 1, item.label, labelStyle);
 
-      // detail を右寄せ (右余白 1 セル)
+      // detail 右寄せ (右余白 1 セル)
       if (item.detail) {
         const detailCol = this.anchorCol + this.popupCols - 1 - item.detail.length;
         writeCells(this.buffer, bufRow, detailCol, item.detail, detailStyle);
