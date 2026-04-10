@@ -137,6 +137,10 @@ export class CompletionPopup {
         this.buffer.set(row, col, { ...rowCells[c] });
       }
     }
+    // 直上行も dirty にして背景オーバーラップからリカバリさせる
+    if (this.anchorRow > 0) {
+      this.buffer.dirty.add(this.anchorRow - 1);
+    }
   }
 
   // ----- 描画 -----
@@ -175,6 +179,13 @@ export class CompletionPopup {
         const detailCol = this.anchorCol + this.popupCols - 1 - item.detail.length;
         writeCells(this.buffer, bufRow, detailCol, item.detail, detailStyle);
       }
+    }
+
+    // ポップアップ直上の行を dirty にマーク。draw() の背景クリアが
+    // ±1px オーバーラップするため、ポップアップ行の描画が直上行の
+    // グリフ下端を侵食する。直上行も再描画させることでリカバリする。
+    if (this.anchorRow > 0) {
+      this.buffer.dirty.add(this.anchorRow - 1);
     }
   }
 }

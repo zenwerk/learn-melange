@@ -59,8 +59,11 @@ export class TerminalCanvas {
     this.cellWidth = Math.ceil(m.width);
     const ascent = m.actualBoundingBoxAscent || this.fontSize * 0.8;
     const descent = m.actualBoundingBoxDescent || this.fontSize * 0.2;
-    this.ascent = ascent;
-    this.cellHeight = Math.ceil((ascent + descent) * 1.25);
+    // セル上端にグリフが密着すると CRT バレル歪みで上端が切れるため、
+    // 上に 2px の余白を確保して描画位置を下げる。
+    const pad = 2;
+    this.ascent = ascent + pad;
+    this.cellHeight = Math.ceil((ascent + descent) * 1.25) + pad;
   }
 
   #applySize() {
