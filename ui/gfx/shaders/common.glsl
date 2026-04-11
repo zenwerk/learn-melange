@@ -1,8 +1,10 @@
-// 全シェーダ共通のヘッダ。各 .frag の先頭で #include "common.glsl" する。
-// include は ui/gfx/gl.js の preprocessShader が文字列置換で展開する。
-
 #version 300 es
 precision highp float;
+
+// 全シェーダ共通のヘッダ。各 .frag の先頭で #include "common.glsl" する。
+// include は ui/gfx/gl.js の preprocessShader が文字列置換で展開する。
+// #version は GLSL の規約でファイル先頭 (空白・コメントより前) に必要なため、
+// このファイルの最初の 2 行は絶対に動かさないこと。
 
 // 9-tap Gaussian weights (sigma ≈ 2)
 const float GAUSSIAN_W[5] = float[5](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
