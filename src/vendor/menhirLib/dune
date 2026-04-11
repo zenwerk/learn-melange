@@ -1,4 +1,4 @@
 (library
  (name menhirLib)
- (modes melange)
+ (modes melange byte native)
  (flags (:standard -w -a)))

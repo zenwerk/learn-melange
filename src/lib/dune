@@ -1,6 +1,6 @@
 (library
  (name calc_core)
- (modes melange)
+ (modes melange byte native)
  (libraries menhirLib)
  (preprocess (pps melange.ppx)))
 
