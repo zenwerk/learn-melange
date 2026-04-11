@@ -1,13 +1,10 @@
 // REPL 全体の組み立て。
-// - CellBuffer + TerminalCanvas + LineEditor + History + KeyboardInput を繋ぐ
-// - OCaml session (request 単一エンドポイント) を SessionClient 経由で呼ぶ
-// - :effect コマンド / font zoom / effect cycle のフック
 //
 // ---- 副作用 → 描画の不変量 ----
 // CellBuffer を変更するすべての処理は #withRender の配下で実行される。
 // #withRender は finally で effects.requestRender() を 1 回呼ぶので、内部
 // 関数 (#println / #newline / #handleXxx / ...) は個別に requestRender を
-// 呼んではいけない。エントリポイントは以下の 4 種類のみ:
+// 呼ばないこと。エントリポイントは以下の 4 種類:
 //   1. KeyboardInput のコールバック (onAction/onInsert/onCompose/onRawKey)
 //   2. window resize
 //   3. blink timer (setInterval)
@@ -15,7 +12,7 @@
 // 新しいエントリポイントを追加する際は必ず #withRender で包むこと。
 
 import { create_session } from 'melange-output/src/main.js';
-import { CellBuffer, makeCell, writeCells } from '../terminal/cell-buffer.js';
+import { CellBuffer, writeCells } from '../terminal/cell-buffer.js';
 import { TerminalCanvas } from '../terminal/terminal-canvas.js';
 import { LineEditor } from '../terminal/line-editor.js';
 import { History } from '../terminal/history.js';
@@ -65,9 +62,7 @@ export class ReplUI {
       onChange: () => this.#handleEditorChange(),
     });
 
-    // ---- キーボードエントリポイント ----
-    // onRawKey は戻り値 (bool) が必要なので withRender は内部で呼ぶ。
-    // それ以外は全て withRender でラップされる。
+    // onRawKey は戻り値 (bool) を返すため withRender は内部で呼ぶ。
     this.keyboard = new KeyboardInput({
       host: mount,
       onAction: (action) => this.#withRender(() => this.#handleAction(action)),
@@ -76,8 +71,6 @@ export class ReplUI {
       onRawKey: (e) => this.#handleRawKey(e),
     });
 
-    // Melange の生セッションを SessionClient で包み、呼び出し元が全て
-    // SessionClient のメソッド (eval / complete / ...) を使うようにする。
     this.session = createSessionClient(create_session());
     this.languageClient = createLanguageClient(this.session);
     this.completionPopup = new CompletionPopup({ buffer: this.buffer });
@@ -88,11 +81,10 @@ export class ReplUI {
     this.awaitingInput = false;
     this.submitResolve = null;
     this.blinkTimer = null;
+    this.onResize = null;
   }
 
-  // ------------- エントリポイント共通の出口 -------------
-
-  // 副作用ハンドラを包む薄いラッパ。処理中に例外が出ても finally で必ず
+  // 副作用ハンドラを包む薄いラッパ。例外が出ても finally で必ず
   // requestRender を呼ぶので、描画の呼び忘れが構造的に発生しない。
   #withRender(fn) {
     try {
@@ -103,27 +95,27 @@ export class ReplUI {
   }
 
   async run() {
-    // Web フォント待ち (失敗しても monospace で続行)
     try { await document.fonts.ready; } catch { /* noop */ }
     this.terminalCanvas.setFontSize(this.fontSize);
-    // 初期 relayout は effects 未生成のため withRender を通らない。
+    // 初期 relayout は effects 未生成で withRender を通らない。
     // 直後の effects.loadInitial() → set() → requestRender() が初回描画を担う。
     this.#relayout();
 
-    // エフェクトマネージャ初期化 (overlay canvas サイズは relayout で整った)
     this.effects = new EffectManager({
       terminalCanvas: this.terminalCanvas,
       overlayCanvas: this.overlayCanvas,
     });
     this.effects.loadInitial();
 
-    window.addEventListener('resize', () => this.#withRender(() => this.#relayout()));
+    this.onResize = () => this.#withRender(() => this.#relayout());
+    window.addEventListener('resize', this.onResize);
 
-    // カーソル点滅 (500ms)
+    // カーソル点滅 (500ms)。setBlink の戻り値が false (変化なし) の
+    // ときは render 要求をスキップする。
     this.blinkTimer = setInterval(() => {
-      this.#withRender(() => {
-        this.terminalCanvas.setBlink(!this.terminalCanvas.cursor.blinkOn);
-      });
+      if (this.terminalCanvas.setBlink(!this.terminalCanvas.cursor.blinkOn)) {
+        this.effects?.requestRender();
+      }
     }, 500);
 
     this.#withRender(() => this.#banner());
@@ -141,6 +133,17 @@ export class ReplUI {
         const result = this.session.eval(trimmed);
         this.#printResult(result);
       });
+    }
+  }
+
+  dispose() {
+    if (this.blinkTimer != null) {
+      clearInterval(this.blinkTimer);
+      this.blinkTimer = null;
+    }
+    if (this.onResize) {
+      window.removeEventListener('resize', this.onResize);
+      this.onResize = null;
     }
   }
 
@@ -165,38 +168,27 @@ export class ReplUI {
       this.buffer.scrollUp(1);
       this.cursorRow = this.buffer.rows - 1;
     }
-    // カーソル行を空にしておく
-    for (let c = 0; c < this.buffer.cols; c++) {
-      this.buffer.set(this.cursorRow, c, makeCell(' ', null, 1));
-    }
+    this.buffer.clearRun(this.cursorRow, 0, this.buffer.cols);
   }
 
-  // 入力中に割り込みメッセージを出す共通ヘルパ。editor が占めていた行を
-  // 一度クリアしてメッセージを書き、次の行で editor を同じ入力内容のまま
-  // 再開する。入力中でなければ素の #println と同じ挙動になる。
+  // 入力中の割り込みメッセージ。editor が占めていた行をクリアして
+  // メッセージを書き、次の行で editor を同じ入力内容のまま再開する。
   #printAboveInput(segments) {
     if (!this.awaitingInput) {
       this.#println(segments);
       return;
     }
-    // 現在の入力とカーソル位置を保存
     const savedInput = this.editor.value();
     const savedCursor = this.editor.cursorOffset();
-    // editor.row に書かれたプロンプト/入力をクリアして書き出しの起点にする
     const row = this.editor.row;
-    for (let c = 0; c < this.buffer.cols; c++) {
-      this.buffer.set(row, c, makeCell(' ', null, 1));
-    }
+    this.buffer.clearRun(row, 0, this.buffer.cols);
     this.cursorRow = row;
     this.#println(segments);
-    // 次の入力行で editor を再開、保存した入力を復元
     this.editor.begin(PROMPT, this.cursorRow, { input: savedInput, cursor: savedCursor });
   }
 
   // ------------- 入力 -------------
 
-  // readLine は submitResolve を設定する非同期プリミティブ。プロンプト
-  // 描画を #withRender で包んで初回プロンプトが確実に表示されるようにする。
   #readLine(prompt) {
     return new Promise((resolve) => {
       this.submitResolve = resolve;
@@ -210,7 +202,6 @@ export class ReplUI {
   #handleSubmit(line) {
     this.awaitingInput = false;
     this.completionPopup.hide();
-    // エディタが最後に書いた行の 1 つ先へ
     this.#newline();
     const r = this.submitResolve;
     this.submitResolve = null;
@@ -228,7 +219,7 @@ export class ReplUI {
       this.completionPopup.hide();
       return;
     }
-    // ポップアップが出ている状態で Enter → 候補を確定、元の submit は行わない
+    // ポップアップ表示中の Enter → 候補確定。元の submit は行わない。
     if (action === 'submit' && this.completionPopup.isVisible()) {
       const item = this.completionPopup.currentItem();
       this.completionPopup.hide();
@@ -240,8 +231,8 @@ export class ReplUI {
 
     if (!this.editor[action]) return;
     this.editor[action]();
-    // カーソル移動だけのアクション (moveLeft/moveRight/moveHome/moveEnd/...) でも
-    // ポップアップが出ていれば閉じる (カーソルが離れると候補が無効になるため)
+    // カーソル移動/history でも、ポップアップが出ていれば閉じる
+    // (カーソルが離れると候補が無効になるため)。
     if (
       this.completionPopup.isVisible() &&
       (action.startsWith('move') || action.startsWith('history'))
@@ -270,7 +261,7 @@ export class ReplUI {
     const items = this.languageClient.completeSync(input, offset);
     if (!items || items.length === 0) return;
 
-    const row = this.editor.row + 1; // 入力行の下に表示
+    const row = this.editor.row + 1;
     const col = this.editor.prefixStartCol();
     this.completionPopup.show(items, row, col);
   }
@@ -282,8 +273,8 @@ export class ReplUI {
     else if (ev.phase === 'start') this.editor.setComposing('');
   }
 
-  // onRawKey は戻り値 (ハンドルしたか否か) を返す必要があり、KeyboardInput 側で
-  // 分岐する。処理した場合 (= 描画を伴う可能性がある) のみ #withRender で包む。
+  // onRawKey は戻り値 bool を返す必要があるため、処理した場合のみ
+  // 内側で withRender を呼ぶ。
   #handleRawKey(e) {
     if (!(e.ctrlKey || e.metaKey)) return false;
     const k = e.key;
@@ -343,11 +334,9 @@ export class ReplUI {
       this.terminalCanvas.resizeBuffer(rows, cols);
       if (this.cursorRow >= rows) this.cursorRow = rows - 1;
     }
-    // overlay canvas サイズは terminal canvas の pixel size に合わせる
     this.overlayCanvas.width = this.terminalCanvas.canvas.width;
     this.overlayCanvas.height = this.terminalCanvas.canvas.height;
     if (this.effects) this.effects.resize(this.overlayCanvas.width, this.overlayCanvas.height);
-    // 入力中なら editor を再スタート
     if (this.awaitingInput) this.editor.begin(PROMPT, this.cursorRow);
   }
 

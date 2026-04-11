@@ -1,25 +1,16 @@
-(* セッション状態と評価エントリポイント (純粋 OCaml)。
-   JS 境界での [%mel.obj] 変換や create_session 組み立ては src/js_bridge.ml 側にある。 *)
-
 open Parse_util
 
-type t = {
-  env : Eval.env;
-  ls_state : Calc_language_service.state;
-}
+type t = { env : Eval.env }
 
-let empty : t = {
-  env = Eval.StringMap.empty;
-  ls_state = Calc_language_service.empty;
-}
+let empty : t = { env = Eval.StringMap.empty }
 
 type eval_result =
   | Expr of float
   | Binding of string * float
   | Eval_error of { message : string; column : int }
 
-(* 通常のパース。AtEof の場合は EOF トークンを明示的に供給して文法の終端を確定させる。
-   incremental API は自動的に EOF を処理しないため、手動で渡す必要がある。 *)
+(* AtEof を受けたら EOF を明示的に feed しないと文法が閉じない。
+   Menhir の incremental API は自動で EOF を入れないため。 *)
 let push_parse lexbuf checkpoint : (Ast.statement, string * int) result =
   match feed_tokens lexbuf checkpoint with
   | Fed v -> Ok v
@@ -42,33 +33,27 @@ let eval (session : t) (input : string) : t * eval_result =
     | Error (msg, col) ->
       (session, Eval_error { message = msg; column = col })
     | Ok stmt ->
-      (match Eval.eval_statement session.env stmt with
-       | Ok (new_env, Eval.ExprResult v) ->
-         let new_session = {
-           env = new_env;
-           ls_state = Calc_language_service.of_env new_env;
-         } in
-         (new_session, Expr v)
-       | Ok (new_env, Eval.BindResult (n, v)) ->
-         let new_session = {
-           env = new_env;
-           ls_state = Calc_language_service.of_env new_env;
-         } in
-         (new_session, Binding (n, v))
-       | Error err ->
-         (session, Eval_error { message = err.Eval.message; column = err.Eval.column }))
+      match Eval.eval_statement session.env stmt with
+      | Error err ->
+        (session, Eval_error { message = err.Eval.message; column = err.Eval.column })
+      | Ok (new_env, payload) ->
+        let next = { env = new_env } in
+        let result = match payload with
+          | Eval.ExprResult v -> Expr v
+          | Eval.BindResult (n, v) -> Binding (n, v)
+        in
+        (next, result)
   end
 
-(* ----- 言語サービス委譲 ----- *)
+let ls_state (session : t) = Calc_language_service.of_env session.env
 
-let complete (session : t) (input : string) (offset : int) =
-  Calc_language_service.complete session.ls_state input offset
+let complete session input offset =
+  Calc_language_service.complete (ls_state session) input offset
 
-let diagnose (session : t) (input : string) =
-  Calc_language_service.diagnose session.ls_state input
+let diagnose session input =
+  Calc_language_service.diagnose (ls_state session) input
 
-let hover (session : t) (input : string) (offset : int) =
-  Calc_language_service.hover session.ls_state input offset
+let hover session input offset =
+  Calc_language_service.hover (ls_state session) input offset
 
-let tokens (input : string) =
-  Calc_language_service.tokens input
+let tokens input = Calc_language_service.tokens input

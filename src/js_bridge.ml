@@ -1,19 +1,11 @@
-(* OCaml → JS 境界。[%mel.obj] による変換と create_session の組み立てを集約する。
-   純粋 OCaml 側のロジックは Calc_core (= src/lib) に置き、このモジュールは
-   Js.Nullable / JS オブジェクトへの写像だけを担当する。
-
-   create_session() は `session.request(req)` という単一エンドポイントを
-   公開する。req は { type: 'eval' | 'complete' | 'diagnose' | 'hover' | 'tokens',
-   input: string, offset?: int } という shape の JS オブジェクト。
-   Protocol.handle が中身の分岐を行い、結果は type ごとに固有の shape で返る。
-   将来 Worker 化や LSP 化する際は、この request/response を postMessage に
-   置き換えれば済む。 *)
+(* OCaml → JS 境界。[%mel.obj] 変換と create_session の組み立てを集約。
+   純粋 OCaml ロジックは Calc_core 側に置き、このモジュールは Js.Nullable /
+   JS オブジェクトへの写像だけを担当する。将来 Worker/LSP 化する際は
+   create_session を postMessage ベースに置き換えれば済む。 *)
 
 module LS = Calc_core.Language_service
 module S = Calc_core.Session
 module P = Calc_core.Protocol
-
-(* ---------- eval 結果 ---------- *)
 
 type result_obj = <
   success : bool;
@@ -60,8 +52,6 @@ let eval_result_to_js (r : S.eval_result) : result_obj =
   | S.Binding (n, v) -> make_bind_result n v
   | S.Eval_error { message; column } -> make_error message column
 
-(* ---------- 言語サービス結果 ---------- *)
-
 type completion_js = <
   label : string;
   kind : string;
@@ -78,9 +68,7 @@ let completion_to_js (item : LS.completion_item) : completion_js =
   [%mel.obj {
     label = item.label;
     kind = completion_kind_to_string item.kind;
-    detail = (match item.detail with
-              | Some s -> Js.Nullable.return s
-              | None -> Js.Nullable.null);
+    detail = Js.Nullable.fromOption item.detail;
   }]
 
 let severity_to_string = function
@@ -136,63 +124,47 @@ let semantic_token_to_js (t : LS.semantic_token) : semantic_token_js =
     kind = token_kind_to_string t.kind;
   }]
 
-(* ---------- request/response の JS 境界 ---------- *)
-
-(* JS 側から渡ってくるリクエスト object の型。
-   OCaml の予約語と衝突しない `op` フィールドでリクエスト種別を運ぶ。
-   その他のフィールド (input / offset) は nullable で、op ごとに使われる。 *)
 type request_js = <
   op : string;
   input : string Js.Nullable.t;
   offset : int Js.Nullable.t;
 > Js.t
 
-let nullable_string_or_empty (v : string Js.Nullable.t) : string =
-  match Js.Nullable.toOption v with
-  | Some s -> s
-  | None -> ""
+let nullable_string_or_empty v =
+  match Js.Nullable.toOption v with Some s -> s | None -> ""
 
-let nullable_int_or_zero (v : int Js.Nullable.t) : int =
-  match Js.Nullable.toOption v with
-  | Some i -> i
-  | None -> 0
+let nullable_int_or_zero v =
+  match Js.Nullable.toOption v with Some i -> i | None -> 0
 
-(* JS リクエストオブジェクトを Protocol.request に変換。
-   未知の op は Eval "" (空評価 = エラー) に倒して安全側に倒す。 *)
 let request_of_js (r : request_js) : P.request =
-  let op = r##op in
   let input = nullable_string_or_empty r##input in
   let offset = nullable_int_or_zero r##offset in
-  match op with
+  match r##op with
   | "eval" -> P.Eval input
   | "complete" -> P.Complete { input; offset }
   | "diagnose" -> P.Diagnose input
   | "hover" -> P.Hover { input; offset }
   | "tokens" -> P.Tokens input
-  | _ -> P.Eval ""
+  | unknown -> failwith ("js_bridge: unknown session op: " ^ unknown)
 
-(* Protocol.response を JS 境界の値 (shape は kind ごとに異なる) に変換。
-   ブランチごとに戻り値の型が違うため、OCaml 型システムの外に出て
-   Obj.magic で統一する。JS 側では session-client.js が shape を知っている。 *)
+(* response の JS 値は shape がブランチごとに異なり OCaml の型システム
+   では 1 つの型に纏められないため、各ブランチで Obj.magic で < > Js.t
+   に揃える。unsafe cast はこの関数だけに閉じ込める。 *)
 let response_to_js (resp : P.response) : < > Js.t =
   match resp with
   | P.REval r -> Obj.magic (eval_result_to_js r)
   | P.RComplete items ->
-    items |> List.map completion_to_js |> Array.of_list |> Obj.magic
+    Obj.magic (Array.of_list (List.map completion_to_js items))
   | P.RDiagnose diags ->
-    diags |> List.map diagnostic_to_js |> Array.of_list |> Obj.magic
+    Obj.magic (Array.of_list (List.map diagnostic_to_js diags))
   | P.RHover info ->
-    (match info with
-     | Some h -> Obj.magic (Js.Nullable.return (hover_to_js h))
-     | None -> Obj.magic Js.Nullable.null)
+    Obj.magic (Js.Nullable.fromOption (Option.map hover_to_js info))
   | P.RTokens toks ->
-    toks |> List.map semantic_token_to_js |> Array.of_list |> Obj.magic
+    Obj.magic (Array.of_list (List.map semantic_token_to_js toks))
 
-(* ---------- セッション (JS 側公開オブジェクト) ----------
-   OCaml 純粋 API の Session.t は immutable なので、handle のたびに新しい値
-   を得る。JS 側は同じ session オブジェクトを使い回す UX を期待するため、
-   ref で包んで request 呼び出しの内部で state を差し替える。 *)
-
+(* Session.t は immutable なので handle のたびに新しい値を得る。
+   JS 側は同じ session を使い回す UX を期待するため、ref で包んで
+   request 内部で state を差し替える。 *)
 let create_session () =
   let state = ref S.empty in
   [%mel.obj {

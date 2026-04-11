@@ -1,6 +1,6 @@
-(* セッションとの通信を単一の request/response で表現する。
-   JS 境界でも OCaml 内部でも handle 1 本に集約することで、将来 Worker や
-   LSP サーバへ切り替える際にメッセージ種別を足すだけで済むようにする。 *)
+(* セッションとの通信を単一の request/response に集約する。将来 Worker
+   や LSP サーバへ切り替える際は、この handle を postMessage ディスパッチ
+   に差し替えれば済む。 *)
 
 type request =
   | Eval of string
@@ -16,8 +16,7 @@ type response =
   | RHover of Language_service.hover_info option
   | RTokens of Language_service.semantic_token list
 
-(* セッションに対して request を処理し、新しいセッションとレスポンスを返す。
-   state が変化するのは Eval だけだが、将来のコマンド追加を容易にするため
+(* state が変化するのは Eval だけだが、将来のコマンド追加を容易にするため
    全ケースで (Session.t * response) を返す統一シグネチャにしている。 *)
 let handle (session : Session.t) (req : request) : Session.t * response =
   match req with
@@ -25,14 +24,10 @@ let handle (session : Session.t) (req : request) : Session.t * response =
     let (next, result) = Session.eval session input in
     (next, REval result)
   | Complete { input; offset } ->
-    let items = Session.complete session input offset in
-    (session, RComplete items)
+    (session, RComplete (Session.complete session input offset))
   | Diagnose input ->
-    let diags = Session.diagnose session input in
-    (session, RDiagnose diags)
+    (session, RDiagnose (Session.diagnose session input))
   | Hover { input; offset } ->
-    let info = Session.hover session input offset in
-    (session, RHover info)
+    (session, RHover (Session.hover session input offset))
   | Tokens input ->
-    let toks = Session.tokens input in
-    (session, RTokens toks)
+    (session, RTokens (Session.tokens input))

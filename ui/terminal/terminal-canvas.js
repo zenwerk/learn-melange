@@ -98,10 +98,13 @@ export class TerminalCanvas {
     this.buffer.dirty.add(row);
   }
 
+  // 状態が変化したときだけ true を返す。呼び出し側が render 要求を
+  // スキップできるようにするための戻り値。
   setBlink(on) {
-    if (this.cursor.blinkOn === on) return;
+    if (this.cursor.blinkOn === on) return false;
     this.cursor.blinkOn = on;
     this.buffer.dirty.add(this.cursor.row);
+    return true;
   }
 
   // dirty 行だけ背景 → 文字 → カーソルを描画する。
