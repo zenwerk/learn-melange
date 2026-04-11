@@ -171,6 +171,28 @@ export class ReplUI {
     }
   }
 
+  // 入力中に割り込みメッセージを出す共通ヘルパ。editor が占めていた行を
+  // 一度クリアしてメッセージを書き、次の行で editor を同じ入力内容のまま
+  // 再開する。入力中でなければ素の #println と同じ挙動になる。
+  #printAboveInput(segments) {
+    if (!this.awaitingInput) {
+      this.#println(segments);
+      return;
+    }
+    // 現在の入力とカーソル位置を保存
+    const savedInput = this.editor.value();
+    const savedCursor = this.editor.cursorOffset();
+    // editor.row に書かれたプロンプト/入力をクリアして書き出しの起点にする
+    const row = this.editor.row;
+    for (let c = 0; c < this.buffer.cols; c++) {
+      this.buffer.set(row, c, makeCell(' ', null, 1));
+    }
+    this.cursorRow = row;
+    this.#println(segments);
+    // 次の入力行で editor を再開、保存した入力を復元
+    this.editor.begin(PROMPT, this.cursorRow, { input: savedInput, cursor: savedCursor });
+  }
+
   // ------------- 入力 -------------
 
   // readLine は submitResolve を設定する非同期プリミティブ。プロンプト
@@ -276,7 +298,7 @@ export class ReplUI {
     if ((k === 'E' || k === 'e' || code === 'KeyE') && e.shiftKey) {
       this.#withRender(() => {
         const next = this.effects?.cycle();
-        if (next) this.#println([{ text: `effect: ${next}`, style: S.dim }]);
+        if (next) this.#printAboveInput([{ text: `effect: ${next}`, style: S.dim }]);
       });
       return true;
     }

@@ -34,10 +34,12 @@ export class LineEditor {
     this.promptCol = 0;
   }
 
-  begin(prompt, row) {
+  // オプションで初期入力とカーソル位置を渡すと、そこから編集を再開できる
+  // (effect cycle などで入力中の行を別の行に移動する際に使う)。
+  begin(prompt, row, { input = '', cursor = 0 } = {}) {
     this.prompt = prompt;
-    this.input = '';
-    this.cursor = 0;
+    this.input = input;
+    this.cursor = Math.max(0, Math.min(cursor, input.length));
     this.composing = '';
     this.row = row;
     this.#clearLine();
