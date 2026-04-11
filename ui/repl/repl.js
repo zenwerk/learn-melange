@@ -1,6 +1,6 @@
 // REPL 全体の組み立て。
 // - CellBuffer + TerminalCanvas + LineEditor + History + KeyboardInput を繋ぐ
-// - OCaml session (create_session / eval / hints) に式を渡す
+// - OCaml session (create_session / eval / complete / hover / tokens) に式を渡す
 // - :effect コマンド / font zoom / effect cycle のフック
 
 import { create_session } from 'melange-output/src/main.js';
