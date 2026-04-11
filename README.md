@@ -31,7 +31,7 @@ opam switch create . ocaml-base-compiler.4.14.2 --no-install
 
 # 2. 必要なパッケージをインストール
 eval $(opam env)
-opam install melange dune ocaml-lsp-server reason menhir alcotest -y
+opam install melange dune ocaml-lsp-server menhir alcotest -y
 
 # 3. direnv を許可 (以降 cd するだけで opam env が自動適用される)
 direnv allow
