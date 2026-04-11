@@ -2,7 +2,7 @@
 // IME の composing 文字列はカーソル位置に下線付きで仮表示する。
 
 import { cpStart, cpLen, strWidth, strWidthRange } from './width.js';
-import { makeCell, writeCells } from './cell-buffer.js';
+import { writeCells } from './cell-buffer.js';
 
 /**
  * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
@@ -243,17 +243,13 @@ export class LineEditor {
   }
 
   #clearLine() {
-    for (let c = 0; c < this.buffer.cols; c++) {
-      this.buffer.set(this.row, c, makeCell(' ', null, 1));
-    }
+    this.buffer.clearRun(this.row, 0, this.buffer.cols);
   }
 
   // 入力 + composing を buffer の row の promptCol 以降に書く。
   #renderInput() {
     const row = this.row;
-    for (let c = this.promptCol; c < this.buffer.cols; c++) {
-      this.buffer.set(row, c, makeCell(' ', null, 1));
-    }
+    this.buffer.clearRun(row, this.promptCol, this.buffer.cols - this.promptCol);
     const before = this.input.slice(0, this.cursor);
     const after = this.input.slice(this.cursor);
     let col = this.promptCol;
@@ -262,7 +258,6 @@ export class LineEditor {
       ({ col } = writeCells(this.buffer, row, col, this.composing, UNDERLINE_STYLE));
     }
     writeCells(this.buffer, row, col, after, null);
-    this.buffer.dirty.add(row);
   }
 
   #placeCursor() {

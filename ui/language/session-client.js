@@ -1,5 +1,5 @@
 // 将来 Worker 化した際、postMessage ベースに差し替えるだけで呼び出し元
-// (repl.js / language-client.js) が一切変わらないようにするための薄い層。
+// が一切変わらないようにするための薄い層。
 
 /**
  * @typedef {import('../types.d.ts').SessionOp} SessionOp
@@ -11,15 +11,6 @@
  * @typedef {import('melange-output/src/main.js').RawSession} RawSession
  */
 
-/** @type {Readonly<Record<string, SessionOp>>} */
-const OP = Object.freeze({
-  EVAL: 'eval',
-  COMPLETE: 'complete',
-  DIAGNOSE: 'diagnose',
-  HOVER: 'hover',
-  TOKENS: 'tokens',
-});
-
 export class SessionClient {
   /** @param {RawSession} session */
   constructor(session) {
@@ -27,11 +18,19 @@ export class SessionClient {
   }
 
   /**
+   * @param {SessionOp} op
+   * @param {{ input?: string; offset?: number }} payload
+   */
+  #call(op, payload) {
+    return this.session.request({ op, ...payload });
+  }
+
+  /**
    * @param {string} input
    * @returns {EvalResultObj}
    */
   eval(input) {
-    return /** @type {EvalResultObj} */ (this.session.request({ op: OP.EVAL, input }));
+    return /** @type {EvalResultObj} */ (this.#call('eval', { input }));
   }
 
   /**
@@ -40,7 +39,7 @@ export class SessionClient {
    * @returns {CompletionItem[]}
    */
   complete(input, offset) {
-    return /** @type {CompletionItem[]} */ (this.session.request({ op: OP.COMPLETE, input, offset }));
+    return /** @type {CompletionItem[]} */ (this.#call('complete', { input, offset }));
   }
 
   /**
@@ -48,7 +47,7 @@ export class SessionClient {
    * @returns {Diagnostic[]}
    */
   diagnose(input) {
-    return /** @type {Diagnostic[]} */ (this.session.request({ op: OP.DIAGNOSE, input }));
+    return /** @type {Diagnostic[]} */ (this.#call('diagnose', { input }));
   }
 
   /**
@@ -57,7 +56,7 @@ export class SessionClient {
    * @returns {HoverInfo | null}
    */
   hover(input, offset) {
-    return /** @type {HoverInfo | null} */ (this.session.request({ op: OP.HOVER, input, offset }));
+    return /** @type {HoverInfo | null} */ (this.#call('hover', { input, offset }));
   }
 
   /**
@@ -65,11 +64,6 @@ export class SessionClient {
    * @returns {SemanticToken[]}
    */
   tokens(input) {
-    return /** @type {SemanticToken[]} */ (this.session.request({ op: OP.TOKENS, input }));
+    return /** @type {SemanticToken[]} */ (this.#call('tokens', { input }));
   }
-}
-
-/** @param {RawSession} session */
-export function createSessionClient(session) {
-  return new SessionClient(session);
 }

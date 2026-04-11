@@ -19,8 +19,8 @@ import { History } from '../terminal/history.js';
 import { KeyboardInput } from '../terminal/keyboard-input.js';
 import { EffectManager } from '../effects/effect-manager.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
-import { createSessionClient } from '../language/session-client.js';
-import { createLanguageClient } from '../language/language-client.js';
+import { SessionClient } from '../language/session-client.js';
+import { LanguageClient } from '../language/language-client.js';
 import { CompletionPopup } from './completion-popup.js';
 
 /**
@@ -85,8 +85,8 @@ export class ReplUI {
       onRawKey: (e) => this.#handleRawKey(e),
     });
 
-    this.session = createSessionClient(create_session());
-    this.languageClient = createLanguageClient(this.session);
+    this.session = new SessionClient(create_session());
+    this.languageClient = new LanguageClient(this.session);
     this.completionPopup = new CompletionPopup({ buffer: this.buffer });
     this.effects = null; // フォント読み込み後に生成
     this.fontSize = FONT_SIZE_DEFAULT;

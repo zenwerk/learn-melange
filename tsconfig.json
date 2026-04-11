@@ -18,18 +18,13 @@
     }
   },
   "include": [
-    "ui/types.d.ts",
-    "ui/melange-output-stub/**/*.d.ts",
-    "ui/main.js",
-    "ui/language/session-client.js",
-    "ui/language/language-client.js",
-    "ui/terminal/cell-buffer.js",
-    "ui/terminal/history.js",
-    "ui/terminal/readline-keys.js",
-    "ui/terminal/width.js",
-    "ui/terminal/keyboard-input.js",
-    "ui/terminal/line-editor.js",
-    "ui/repl/completion-popup.js",
-    "ui/repl/repl.js"
+    "ui/**/*.js",
+    "ui/**/*.d.ts"
+  ],
+  "exclude": [
+    "ui/dist",
+    "ui/__tests__",
+    "node_modules",
+    "_build"
   ]
 }

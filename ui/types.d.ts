@@ -1,8 +1,6 @@
 // OCaml Js_bridge ↔ JS の境界契約。
-// 出どころは src/js_bridge.ml。ここの shape と OCaml 側の [%mel.obj]
-// リテラルは常に同期していること。
+// src/js_bridge.ml の shape と常に同期していること。
 
-// Vite の `?raw` インポートは文字列として解決される。
 declare module '*.frag?raw' {
   const content: string;
   export default content;
@@ -16,51 +14,13 @@ declare module '*.glsl?raw' {
   export default content;
 }
 
-// ---------- セッション (単一エンドポイント) ----------
-
 export type SessionOp = 'eval' | 'complete' | 'diagnose' | 'hover' | 'tokens';
 
-export interface SessionRequestBase {
+export type SessionRequest = {
   op: SessionOp;
   input?: string;
   offset?: number;
-}
-
-export interface EvalRequest extends SessionRequestBase {
-  op: 'eval';
-  input: string;
-}
-
-export interface CompleteRequest extends SessionRequestBase {
-  op: 'complete';
-  input: string;
-  offset: number;
-}
-
-export interface DiagnoseRequest extends SessionRequestBase {
-  op: 'diagnose';
-  input: string;
-}
-
-export interface HoverRequest extends SessionRequestBase {
-  op: 'hover';
-  input: string;
-  offset: number;
-}
-
-export interface TokensRequest extends SessionRequestBase {
-  op: 'tokens';
-  input: string;
-}
-
-export type SessionRequest =
-  | EvalRequest
-  | CompleteRequest
-  | DiagnoseRequest
-  | HoverRequest
-  | TokensRequest;
-
-// ---------- eval 結果 ----------
+};
 
 export type EvalResultKind = 'expr' | 'binding' | 'error';
 
@@ -72,8 +32,6 @@ export interface EvalResultObj {
   error_message: string | null;
   error_column: number | null;
 }
-
-// ---------- 言語サービス結果 ----------
 
 export type CompletionKind = 'keyword' | 'variable' | 'operator' | 'function';
 
@@ -111,8 +69,6 @@ export interface SemanticToken {
   kind: TokenKind;
 }
 
-// ---------- Cell buffer / 描画関連 ----------
-
 export interface CellStyle {
   fg?: string | null;
   bg?: string | null;
@@ -131,8 +87,6 @@ export interface Segment {
   text: string;
   style?: CellStyle | null;
 }
-
-// ---------- エディタ / 入力 ----------
 
 export type ActionName =
   | 'submit'

@@ -3,13 +3,9 @@
 
 import commonGlsl from './shaders/common.glsl?raw';
 
-// #include 可能な chunk 一覧。ファイル名をキーにする。
-const INCLUDES = {
-  'common.glsl': commonGlsl,
-};
+const INCLUDES = { 'common.glsl': commonGlsl };
 
-// `#include "name.glsl"` を INCLUDES の中身で置換する簡易プリプロセッサ。
-// 再帰展開には対応しない (common.glsl 内で更に include しないこと)。
+// 簡易 #include プリプロセッサ (再帰展開なし)。
 export function preprocessShader(src) {
   return src.replace(/^#include\s+"([^"]+)"\s*$/gm, (_, name) => {
     const inc = INCLUDES[name];
