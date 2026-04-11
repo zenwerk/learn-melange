@@ -4,8 +4,7 @@
 
 import { defineProfile } from './profile-base.js';
 import thresholdFs from '../gfx/shaders/threshold.frag?raw';
-import blurH from '../gfx/shaders/blur-h.frag?raw';
-import blurV from '../gfx/shaders/blur-v.frag?raw';
+import blurFs from '../gfx/shaders/blur.frag?raw';
 import compositeFs from '../gfx/shaders/crt-composite.frag?raw';
 
 export default defineProfile({
@@ -32,15 +31,17 @@ export default defineProfile({
     },
     {
       name: 'blurH',
-      fs: blurH,
+      fs: blurFs,
       inputs: ['brightA'],
       output: 'brightB',
+      uniforms: { uAxis: [1, 0] },
     },
     {
       name: 'blurV',
-      fs: blurV,
+      fs: blurFs,
       inputs: ['brightB'],
       output: 'brightA',
+      uniforms: { uAxis: [0, 1] },
     },
     {
       name: 'composite',

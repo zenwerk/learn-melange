@@ -1,6 +1,23 @@
 // @ts-nocheck
 // WebGL2 共通ヘルパ。RenderGraph からのみ利用される想定。
 
+import commonGlsl from './shaders/common.glsl?raw';
+
+// #include 可能な chunk 一覧。ファイル名をキーにする。
+const INCLUDES = {
+  'common.glsl': commonGlsl,
+};
+
+// `#include "name.glsl"` を INCLUDES の中身で置換する簡易プリプロセッサ。
+// 再帰展開には対応しない (common.glsl 内で更に include しないこと)。
+export function preprocessShader(src) {
+  return src.replace(/^#include\s+"([^"]+)"\s*$/gm, (_, name) => {
+    const inc = INCLUDES[name];
+    if (inc == null) throw new Error(`Unknown shader include: ${name}`);
+    return inc;
+  });
+}
+
 export function createContext(canvas) {
   const gl = canvas.getContext('webgl2', {
     alpha: true,
@@ -25,8 +42,8 @@ export function compileShader(gl, type, src) {
 }
 
 export function createProgram(gl, vsSrc, fsSrc) {
-  const vs = compileShader(gl, gl.VERTEX_SHADER, vsSrc);
-  const fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+  const vs = compileShader(gl, gl.VERTEX_SHADER, preprocessShader(vsSrc));
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, preprocessShader(fsSrc));
   const prog = gl.createProgram();
   gl.attachShader(prog, vs);
   gl.attachShader(prog, fs);
