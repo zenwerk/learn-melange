@@ -1,5 +1,4 @@
-// エフェクト無効。パスを積まず、最終パスだけを passthrough にして
-// terminal canvas をそのまま screen に出す。
+// エフェクト無効。passthrough パス 1 本で terminal canvas をそのまま screen に出す。
 
 import { defineProfile } from './profile-base.js';
 import passthrough from '../gfx/shaders/passthrough.frag?raw';
@@ -9,12 +8,12 @@ export default defineProfile({
   description: 'エフェクトなし',
   animated: false,
   defaultParams: {},
-  build(graph) {
-    graph.addPass({
+  passes: () => [
+    {
       name: 'passthrough',
       fs: passthrough,
       inputs: ['source'],
       output: 'screen',
-    });
-  },
+    },
+  ],
 });

@@ -3,7 +3,7 @@
 // 規約:
 //   - 入力テクスチャ 'source' は毎フレーム TerminalCanvas からアップロード。
 //   - 入力テクスチャ 'prev' は「前フレームの最終出力」。プロファイルは自由にサンプルできる。
-//   - プロファイルが addPass({ output: 'screen' }) と書いたパスは最終パス扱い。
+//   - プロファイルが output: 'screen' と書いたパスは最終パス扱い。
 //     実際には内部の 'final' テクスチャに描画され、RenderGraph が末尾で 'final' を
 //     default framebuffer にブリットする。これにより prev フィードバックが自然に回る。
 //   - シェーダー中の uniform 命名規則:
@@ -12,6 +12,10 @@
 //       u_<name>   — 名前ベースでも参照可 (例: u_prev)
 //       uTime      — 秒
 //       uResolution— vec2(width, height)
+//
+// プロファイルは passes 配列 (descriptor) として宣言的に渡される。
+// コンパイル済みプログラムは fs ソースをキーにキャッシュされ、プロファイル
+// 切替時も同じシェーダは再利用される。
 
 import {
   createProgram, createTexture, createFramebuffer, uploadCanvas,
@@ -34,6 +38,7 @@ export class RenderGraph {
     this.quad = createFullscreenQuad(gl);
     this.passes = [];
     this.textures = new Map();
+    this.programCache = new Map(); // fs source -> { program, locs }
     this.#ensureTexture('source', { withFbo: false });
     this.#ensureTexture('prev', { withFbo: true });
     this.#ensureTexture('final', { withFbo: true });
@@ -51,7 +56,12 @@ export class RenderGraph {
     return entry;
   }
 
-  addPass({ name, fs, inputs = [], output, uniforms = {} }) {
+  // fs ソースをキーにプログラムを取得 or コンパイル。同じシェーダは
+  // プロファイル切替を跨いで再利用されるので、OFF ↔ CRT の繰り返しで
+  // リンクコストが発生しない。
+  #getOrCompile(fs) {
+    const cached = this.programCache.get(fs);
+    if (cached) return cached;
     const gl = this.gl;
     const program = createProgram(gl, QUAD_VS, fs);
     const locs = {};
@@ -62,15 +72,29 @@ export class RenderGraph {
       const n = info.name.replace(/\[0\]$/, '');
       locs[n] = gl.getUniformLocation(program, n);
     }
-    if (output && output !== 'screen') this.#ensureTexture(output);
-    for (const inp of inputs) this.#ensureTexture(inp, { withFbo: inp !== 'source' });
-    this.passes.push({ name, program, inputs, output, uniforms, locs });
+    const entry = { program, locs };
+    this.programCache.set(fs, entry);
+    return entry;
   }
 
-  clearPasses() {
-    const gl = this.gl;
-    for (const p of this.passes) gl.deleteProgram(p.program);
-    this.passes = [];
+  // 宣言的にパス配列をセットする。descriptor は
+  // { name, fs, inputs, output, uniforms } の形。プロファイル切替時の
+  // 差分更新や将来のパラメータ live update の窓口。
+  setPasses(descriptors) {
+    this.passes = descriptors.map((d) => {
+      const { program, locs } = this.#getOrCompile(d.fs);
+      if (d.output && d.output !== 'screen') this.#ensureTexture(d.output);
+      const inputs = d.inputs ?? [];
+      for (const inp of inputs) this.#ensureTexture(inp, { withFbo: inp !== 'source' });
+      return {
+        name: d.name,
+        program,
+        locs,
+        inputs,
+        output: d.output,
+        uniforms: d.uniforms ?? {},
+      };
+    });
   }
 
   resize(width, height) {
@@ -158,7 +182,11 @@ export class RenderGraph {
 
   dispose() {
     const gl = this.gl;
-    this.clearPasses();
+    this.passes = [];
+    for (const { program } of this.programCache.values()) {
+      gl.deleteProgram(program);
+    }
+    this.programCache.clear();
     gl.deleteProgram(this.blitProgram);
     for (const entry of this.textures.values()) {
       gl.deleteTexture(entry.tex);

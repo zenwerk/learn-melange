@@ -1,5 +1,6 @@
 // TerminalCanvas と overlay canvas を繋ぎ、プロファイル切替/レンダーループを司る。
-// - プロファイルに応じて RenderGraph の pass を組み直し、テクスチャを再確保。
+// - プロファイルが返すパス記述配列を RenderGraph.setPasses に渡す。
+//   コンパイル済みシェーダはキャッシュされるので切替コストは小さい。
 // - animated=true なら rAF ループを回し続ける。
 //   false なら requestRender() 経由でオンデマンド実行。
 // - localStorage に現在プロファイル名を保存。
@@ -39,11 +40,10 @@ export class EffectManager {
   set(name) {
     const profile = EFFECTS.get(name);
     if (!profile) return false;
-    this.graph.clearPasses();
     this.currentProfile = profile;
     this.currentName = name;
     this.params = { ...profile.defaultParams };
-    profile.build(this.graph, this.params);
+    this.graph.setPasses(profile.passes(this.params));
     localStorage.setItem(STORAGE_KEY, name);
     this.#updateLoop();
     this.requestRender();

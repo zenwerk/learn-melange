@@ -1,5 +1,5 @@
 // cool-retro-term 風の既定 CRT プロファイル。
-//  source → threshold → blurH → blurV → crt-composite(source, bloom, prev) → screen
+//   source → threshold → blurH → blurV → crt-composite(source, bloom, prev) → screen
 
 import { defineProfile } from './profile-base.js';
 import thresholdFs from '../gfx/shaders/threshold.frag?raw';
@@ -21,27 +21,27 @@ export default defineProfile({
     persistence: 0.55,
     chromaAb: 0.002,
   },
-  build(graph, p) {
-    graph.addPass({
+  passes: (p) => [
+    {
       name: 'threshold',
       fs: thresholdFs,
       inputs: ['source'],
       output: 'brightA',
       uniforms: { uThreshold: p.bloomThreshold },
-    });
-    graph.addPass({
+    },
+    {
       name: 'blurH',
       fs: blurH,
       inputs: ['brightA'],
       output: 'brightB',
-    });
-    graph.addPass({
+    },
+    {
       name: 'blurV',
       fs: blurV,
       inputs: ['brightB'],
       output: 'brightA',
-    });
-    graph.addPass({
+    },
+    {
       name: 'composite',
       fs: compositeFs,
       inputs: ['source', 'brightA', 'prev'],
@@ -55,6 +55,6 @@ export default defineProfile({
         uPersistence: p.persistence,
         uChromaAb: p.chromaAb,
       },
-    });
-  },
+    },
+  ],
 });
