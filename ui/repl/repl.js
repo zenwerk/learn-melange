@@ -1,6 +1,6 @@
 // REPL 全体の組み立て。
 // - CellBuffer + TerminalCanvas + LineEditor + History + KeyboardInput を繋ぐ
-// - OCaml session (create_session / eval / complete / hover / tokens) に式を渡す
+// - OCaml session (request 単一エンドポイント) を SessionClient 経由で呼ぶ
 // - :effect コマンド / font zoom / effect cycle のフック
 //
 // ---- 副作用 → 描画の不変量 ----
@@ -22,6 +22,7 @@ import { History } from '../terminal/history.js';
 import { KeyboardInput } from '../terminal/keyboard-input.js';
 import { EffectManager } from '../effects/effect-manager.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
+import { createSessionClient } from '../language/session-client.js';
 import { createLanguageClient } from '../language/language-client.js';
 import { CompletionPopup } from './completion-popup.js';
 
@@ -75,7 +76,9 @@ export class ReplUI {
       onRawKey: (e) => this.#handleRawKey(e),
     });
 
-    this.session = create_session();
+    // Melange の生セッションを SessionClient で包み、呼び出し元が全て
+    // SessionClient のメソッド (eval / complete / ...) を使うようにする。
+    this.session = createSessionClient(create_session());
     this.languageClient = createLanguageClient(this.session);
     this.completionPopup = new CompletionPopup({ buffer: this.buffer });
     this.effects = null; // フォント読み込み後に生成
