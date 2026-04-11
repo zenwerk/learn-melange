@@ -56,7 +56,7 @@ export class ReplUI {
     this.keyboard = new KeyboardInput({
       host: mount,
       onAction: (action) => this.#dispatch(action),
-      onInsert: (text) => this.editor.insert(text),
+      onInsert: (text) => { this.editor.insert(text); this.effects?.requestRender(); },
       onCompose: (ev) => this.#handleCompose(ev),
       onRawKey: (e) => this.#handleRawKey(e),
     });
