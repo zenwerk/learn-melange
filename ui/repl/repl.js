@@ -2,6 +2,17 @@
 // - CellBuffer + TerminalCanvas + LineEditor + History + KeyboardInput を繋ぐ
 // - OCaml session (create_session / eval / complete / hover / tokens) に式を渡す
 // - :effect コマンド / font zoom / effect cycle のフック
+//
+// ---- 副作用 → 描画の不変量 ----
+// CellBuffer を変更するすべての処理は #withRender の配下で実行される。
+// #withRender は finally で effects.requestRender() を 1 回呼ぶので、内部
+// 関数 (#println / #newline / #handleXxx / ...) は個別に requestRender を
+// 呼んではいけない。エントリポイントは以下の 4 種類のみ:
+//   1. KeyboardInput のコールバック (onAction/onInsert/onCompose/onRawKey)
+//   2. window resize
+//   3. blink timer (setInterval)
+//   4. run() のメインループ内 eval/printResult
+// 新しいエントリポイントを追加する際は必ず #withRender で包むこと。
 
 import { create_session } from 'melange-output/src/main.js';
 import { CellBuffer, makeCell, writeCells } from '../terminal/cell-buffer.js';
@@ -53,11 +64,14 @@ export class ReplUI {
       onChange: () => this.#handleEditorChange(),
     });
 
+    // ---- キーボードエントリポイント ----
+    // onRawKey は戻り値 (bool) が必要なので withRender は内部で呼ぶ。
+    // それ以外は全て withRender でラップされる。
     this.keyboard = new KeyboardInput({
       host: mount,
-      onAction: (action) => this.#dispatch(action),
-      onInsert: (text) => { this.editor.insert(text); this.effects?.requestRender(); },
-      onCompose: (ev) => this.#handleCompose(ev),
+      onAction: (action) => this.#withRender(() => this.#handleAction(action)),
+      onInsert: (text) => this.#withRender(() => this.editor.insert(text)),
+      onCompose: (ev) => this.#withRender(() => this.#handleCompose(ev)),
       onRawKey: (e) => this.#handleRawKey(e),
     });
 
@@ -73,10 +87,24 @@ export class ReplUI {
     this.blinkTimer = null;
   }
 
+  // ------------- エントリポイント共通の出口 -------------
+
+  // 副作用ハンドラを包む薄いラッパ。処理中に例外が出ても finally で必ず
+  // requestRender を呼ぶので、描画の呼び忘れが構造的に発生しない。
+  #withRender(fn) {
+    try {
+      return fn();
+    } finally {
+      this.effects?.requestRender();
+    }
+  }
+
   async run() {
     // Web フォント待ち (失敗しても monospace で続行)
     try { await document.fonts.ready; } catch { /* noop */ }
     this.terminalCanvas.setFontSize(this.fontSize);
+    // 初期 relayout は effects 未生成のため withRender を通らない。
+    // 直後の effects.loadInitial() → set() → requestRender() が初回描画を担う。
     this.#relayout();
 
     // エフェクトマネージャ初期化 (overlay canvas サイズは relayout で整った)
@@ -86,27 +114,30 @@ export class ReplUI {
     });
     this.effects.loadInitial();
 
-    window.addEventListener('resize', () => this.#relayout());
+    window.addEventListener('resize', () => this.#withRender(() => this.#relayout()));
 
     // カーソル点滅 (500ms)
     this.blinkTimer = setInterval(() => {
-      this.terminalCanvas.setBlink(!this.terminalCanvas.cursor.blinkOn);
-      this.effects?.requestRender();
+      this.#withRender(() => {
+        this.terminalCanvas.setBlink(!this.terminalCanvas.cursor.blinkOn);
+      });
     }, 500);
 
-    await this.#banner();
+    this.#withRender(() => this.#banner());
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const line = await this.#readLine(PROMPT);
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      if (trimmed.startsWith(':effect')) {
-        this.#handleEffectCommand(trimmed);
-        continue;
-      }
-      const result = this.session.eval(trimmed);
-      this.#printResult(result);
+      this.#withRender(() => {
+        if (trimmed.startsWith(':effect')) {
+          this.#handleEffectCommand(trimmed);
+          return;
+        }
+        const result = this.session.eval(trimmed);
+        this.#printResult(result);
+      });
     }
   }
 
@@ -135,17 +166,19 @@ export class ReplUI {
     for (let c = 0; c < this.buffer.cols; c++) {
       this.buffer.set(this.cursorRow, c, makeCell(' ', null, 1));
     }
-    this.effects?.requestRender();
   }
 
   // ------------- 入力 -------------
 
-  async #readLine(prompt) {
+  // readLine は submitResolve を設定する非同期プリミティブ。プロンプト
+  // 描画を #withRender で包んで初回プロンプトが確実に表示されるようにする。
+  #readLine(prompt) {
     return new Promise((resolve) => {
       this.submitResolve = resolve;
-      this.editor.begin(prompt, this.cursorRow);
-      this.awaitingInput = true;
-      this.effects?.requestRender();
+      this.#withRender(() => {
+        this.editor.begin(prompt, this.cursorRow);
+        this.awaitingInput = true;
+      });
     });
   }
 
@@ -159,7 +192,7 @@ export class ReplUI {
     r?.(line);
   }
 
-  #dispatch(action) {
+  #handleAction(action) {
     if (!this.awaitingInput) return;
 
     if (action === 'completeNext' || action === 'completePrev') {
@@ -168,7 +201,6 @@ export class ReplUI {
     }
     if (action === 'completeCancel') {
       this.completionPopup.hide();
-      this.effects?.requestRender();
       return;
     }
     // ポップアップが出ている状態で Enter → 候補を確定、元の submit は行わない
@@ -178,7 +210,6 @@ export class ReplUI {
       if (item) {
         this.editor.acceptCompletion(item);
       }
-      this.effects?.requestRender();
       return;
     }
 
@@ -192,13 +223,11 @@ export class ReplUI {
     ) {
       this.completionPopup.hide();
     }
-    this.effects?.requestRender();
   }
 
   #handleCompleteNav(delta) {
     if (this.completionPopup.isVisible()) {
       this.completionPopup.moveSelection(delta);
-      this.effects?.requestRender();
     } else {
       this.#triggerCompletion();
     }
@@ -207,7 +236,6 @@ export class ReplUI {
   #handleEditorChange() {
     if (this.completionPopup.isVisible()) {
       this.completionPopup.hide();
-      this.effects?.requestRender();
     }
   }
 
@@ -220,7 +248,6 @@ export class ReplUI {
     const row = this.editor.row + 1; // 入力行の下に表示
     const col = this.editor.prefixStartCol();
     this.completionPopup.show(items, row, col);
-    this.effects?.requestRender();
   }
 
   #handleCompose(ev) {
@@ -228,9 +255,10 @@ export class ReplUI {
     if (ev.phase === 'update') this.editor.setComposing(ev.text);
     else if (ev.phase === 'end') this.editor.endComposing(ev.text);
     else if (ev.phase === 'start') this.editor.setComposing('');
-    this.effects?.requestRender();
   }
 
+  // onRawKey は戻り値 (ハンドルしたか否か) を返す必要があり、KeyboardInput 側で
+  // 分岐する。処理した場合 (= 描画を伴う可能性がある) のみ #withRender で包む。
   #handleRawKey(e) {
     if (!(e.ctrlKey || e.metaKey)) return false;
     const k = e.key;
@@ -238,22 +266,24 @@ export class ReplUI {
 
     // Ctrl+L: 画面クリア
     if (!e.shiftKey && (k === 'l' || k === 'L' || code === 'KeyL')) {
-      this.#clearScreen();
+      this.#withRender(() => this.#clearScreen());
       return true;
     }
     // Ctrl+Shift+E: effect cycle
     if ((k === 'E' || k === 'e' || code === 'KeyE') && e.shiftKey) {
-      const next = this.effects?.cycle();
-      if (next) this.#println([{ text: `effect: ${next}`, style: S.dim }]);
+      this.#withRender(() => {
+        const next = this.effects?.cycle();
+        if (next) this.#println([{ text: `effect: ${next}`, style: S.dim }]);
+      });
       return true;
     }
     // Font zoom
     const isPlus  = k === '+' || k === '=' || k === ';' || code === 'Equal' || code === 'Semicolon';
     const isMinus = k === '-' || k === '_' || code === 'Minus';
     const isZero  = k === '0' || code === 'Digit0';
-    if (isPlus)  { this.#zoom(+1); return true; }
-    if (isMinus) { this.#zoom(-1); return true; }
-    if (isZero)  { this.#setFontSize(FONT_SIZE_DEFAULT); return true; }
+    if (isPlus)  { this.#withRender(() => this.#zoom(+1)); return true; }
+    if (isMinus) { this.#withRender(() => this.#zoom(-1)); return true; }
+    if (isZero)  { this.#withRender(() => this.#setFontSize(FONT_SIZE_DEFAULT)); return true; }
     return false;
   }
 
@@ -264,7 +294,6 @@ export class ReplUI {
     if (this.awaitingInput) {
       this.editor.begin(PROMPT, this.cursorRow);
     }
-    this.effects?.requestRender();
   }
 
   #zoom(delta) { this.#setFontSize(this.fontSize + delta); }
@@ -295,12 +324,11 @@ export class ReplUI {
     if (this.effects) this.effects.resize(this.overlayCanvas.width, this.overlayCanvas.height);
     // 入力中なら editor を再スタート
     if (this.awaitingInput) this.editor.begin(PROMPT, this.cursorRow);
-    this.effects?.requestRender();
   }
 
   // ------------- バナー & フォーマット -------------
 
-  async #banner() {
+  #banner() {
     this.#println([{ text: 'Melange Calculator REPL', style: S.greenBold }]);
     this.#println([{
       text: 'readline: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n ↑↓  /' +
