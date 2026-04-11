@@ -1,3 +1,4 @@
+// @ts-nocheck
 // 画面いっぱいの 2 三角形 (VAO + VBO)。全ポストパスで共有する。
 
 export function createFullscreenQuad(gl) {

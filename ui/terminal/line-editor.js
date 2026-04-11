@@ -4,13 +4,42 @@
 import { cpStart, cpLen, strWidth, strWidthRange } from './width.js';
 import { makeCell, writeCells } from './cell-buffer.js';
 
+/**
+ * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
+ * @typedef {import('../types.d.ts').BeginOptions} BeginOptions
+ * @typedef {import('../types.d.ts').CellStyle} CellStyle
+ * @typedef {import('./cell-buffer.js').CellBuffer} CellBuffer
+ * @typedef {import('./history.js').History} History
+ */
+
+/**
+ * @typedef {object} TerminalCanvasLike
+ * @property {(row: number, col: number, visible?: boolean) => void} setCursor
+ */
+
+/**
+ * @typedef {object} LineEditorOptions
+ * @property {CellBuffer} buffer
+ * @property {TerminalCanvasLike} terminalCanvas
+ * @property {History} history
+ * @property {(line: string) => void} onSubmit
+ * @property {(input: string, cursor: number) => void} onChange
+ */
+
+/** @type {CellStyle} */
 const UNDERLINE_STYLE = { underline: true, dim: true };
+/** @type {CellStyle} */
 const PROMPT_STYLE = { fg: 'green', bold: true };
 
 // OCaml 側 Calc_language_service.find_prefix_start と挙動を揃えること。
 const RE_IDENT_CONT = /[A-Za-z0-9_]/;
 const RE_IDENT_START = /[A-Za-z_]/;
 
+/**
+ * @param {string} input
+ * @param {number} offset
+ * @returns {number}
+ */
 function findPrefixStart(input, offset) {
   let i = offset;
   while (i > 0 && RE_IDENT_CONT.test(input[i - 1])) i--;
@@ -19,6 +48,7 @@ function findPrefixStart(input, offset) {
 }
 
 export class LineEditor {
+  /** @param {LineEditorOptions} opts */
   constructor({ buffer, terminalCanvas, history, onSubmit, onChange }) {
     this.buffer = buffer;
     this.canvas = terminalCanvas;
@@ -36,6 +66,11 @@ export class LineEditor {
 
   // オプションで初期入力とカーソル位置を渡すと、そこから編集を再開できる
   // (effect cycle などで入力中の行を別の行に移動する際に使う)。
+  /**
+   * @param {string} prompt
+   * @param {number} row
+   * @param {BeginOptions} [opts]
+   */
   begin(prompt, row, { input = '', cursor = 0 } = {}) {
     this.prompt = prompt;
     this.input = input;
@@ -70,6 +105,7 @@ export class LineEditor {
 
   // ----- 編集アクション -----
 
+  /** @param {string} text */
   insert(text) {
     if (!text) return;
     this.input = this.input.slice(0, this.cursor) + text + this.input.slice(this.cursor);
@@ -168,6 +204,7 @@ export class LineEditor {
 
   // カーソル左にある「接頭辞 (識別子文字の連続)」を item.label で置き換える。
   // 識別子でない補完 (演算子 "+" 等) の場合は接頭辞なしで単純挿入。
+  /** @param {CompletionItem | null | undefined} item */
   acceptCompletion(item) {
     if (!item) return;
     const start = findPrefixStart(this.input, this.cursor);
@@ -177,11 +214,13 @@ export class LineEditor {
     this.#commit();
   }
 
+  /** @param {string} text */
   setComposing(text) {
     this.composing = text;
     this.#commit();
   }
 
+  /** @param {string} committed */
   endComposing(committed) {
     this.composing = '';
     if (committed) this.insert(committed);
@@ -190,6 +229,7 @@ export class LineEditor {
 
   // ----- 内部 -----
 
+  /** @param {string} text */
   #replace(text) {
     this.input = text;
     this.cursor = text.length;
@@ -233,6 +273,7 @@ export class LineEditor {
   }
 
   // 空白 → 非空白の境界を左/右に探す
+  /** @param {number} from */
   #wordBoundaryLeft(from) {
     const s = this.input;
     let i = from;
@@ -241,6 +282,7 @@ export class LineEditor {
     return i;
   }
 
+  /** @param {number} from */
   #wordBoundaryRight(from) {
     const s = this.input;
     let i = from;

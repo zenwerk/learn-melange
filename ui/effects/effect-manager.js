@@ -1,3 +1,4 @@
+// @ts-nocheck
 // TerminalCanvas と overlay canvas を繋ぎ、プロファイル切替/レンダーループを司る。
 // - プロファイルが返すパス記述配列を RenderGraph.setPasses に渡す。
 //   コンパイル済みシェーダはキャッシュされるので切替コストは小さい。

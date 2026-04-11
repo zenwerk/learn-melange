@@ -1,6 +1,9 @@
 // KeyboardEvent → エディタのアクション名に解決。
 // アクション一覧は LineEditor のメソッドと 1:1 対応。
 
+/** @typedef {import('../types.d.ts').ActionName} ActionName */
+
+/** @type {Readonly<Record<string, ActionName>>} */
 const ACTIONS = {
   'Enter':      'submit',
   'Backspace':  'deleteBack',
@@ -15,6 +18,7 @@ const ACTIONS = {
   'Escape':     'completeCancel',
 };
 
+/** @type {Readonly<Record<string, ActionName>>} */
 const CTRL = {
   'a': 'moveHome',
   'e': 'moveEnd',
@@ -28,11 +32,16 @@ const CTRL = {
   'n': 'historyNext',
 };
 
+/** @type {Readonly<Record<string, ActionName>>} */
 const META = {
   'b': 'moveWordLeft',
   'f': 'moveWordRight',
 };
 
+/**
+ * @param {KeyboardEvent} e
+ * @returns {ActionName | null}
+ */
 export function resolveKey(e) {
   if (e.isComposing) return null;
   if (e.ctrlKey && !e.metaKey && !e.altKey) {

@@ -5,24 +5,41 @@
 
 import { makeCell, writeCells } from '../terminal/cell-buffer.js';
 
+/**
+ * @typedef {import('../terminal/cell-buffer.js').CellBuffer} CellBuffer
+ * @typedef {import('../types.d.ts').Cell} Cell
+ * @typedef {import('../types.d.ts').CellStyle} CellStyle
+ * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
+ * @typedef {import('../types.d.ts').CompletionKind} CompletionKind
+ */
+
 const MAX_VISIBLE = 8;
 
 const POPUP_BG = '#1e1e2e';
 const SELECTED_BG = '#313244';
+/** @type {CellStyle} */
 const STYLE_DETAIL = { dim: true };
 
+/** @type {Partial<Record<CompletionKind, CellStyle>>} */
 const KIND_STYLE = {
   variable: { fg: 'yellow' },
   keyword:  { fg: 'magenta' },
   operator: { fg: 'cyan' },
 };
 
+/**
+ * @param {CellStyle | null | undefined} style
+ * @param {string} bg
+ * @returns {CellStyle}
+ */
 const withBg = (style, bg) => style ? { ...style, bg } : { bg };
 
 export class CompletionPopup {
+  /** @param {{ buffer: CellBuffer }} opts */
   constructor({ buffer }) {
     this.buffer = buffer;
 
+    /** @type {CompletionItem[]} */
     this.items = [];
     this.selection = 0;
     this.visible = false;
@@ -34,6 +51,7 @@ export class CompletionPopup {
 
     // show 前の元セルを保持。hide で復元する。
     // moveSelection 中は書き戻し→再描画で使い回す。
+    /** @type {Cell[][] | null} */
     this._savedCells = null;
   }
 
@@ -41,6 +59,7 @@ export class CompletionPopup {
     return this.visible;
   }
 
+  /** @returns {CompletionItem | null} */
   currentItem() {
     if (!this.visible || this.items.length === 0) return null;
     return this.items[this.selection] ?? null;
@@ -53,6 +72,11 @@ export class CompletionPopup {
     this.visible = false;
   }
 
+  /**
+   * @param {CompletionItem[]} items
+   * @param {number} anchorRow
+   * @param {number} anchorCol
+   */
   show(items, anchorRow, anchorCol) {
     if (!items || items.length === 0) {
       this.hide();
@@ -76,6 +100,7 @@ export class CompletionPopup {
     this.#render();
   }
 
+  /** @param {number} delta */
   moveSelection(delta) {
     if (!this.visible || this.items.length === 0) return;
     const n = this.items.length;
@@ -110,10 +135,12 @@ export class CompletionPopup {
   // ----- セル退避・復元 -----
 
   #saveCells() {
+    /** @type {Cell[][]} */
     const saved = [];
     for (let r = 0; r < this.popupRows; r++) {
       const row = this.anchorRow + r;
       if (row >= this.buffer.rows) break;
+      /** @type {Cell[]} */
       const rowCells = [];
       for (let c = 0; c < this.popupCols; c++) {
         const col = this.anchorCol + c;

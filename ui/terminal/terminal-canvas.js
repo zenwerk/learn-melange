@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Canvas2D に CellBuffer を描画する。
 // 表示はしない (display:none) — WebGL テクスチャ元として使う。
 // セルサイズは measureText + ascent/descent から算出。

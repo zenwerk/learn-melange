@@ -1,6 +1,7 @@
 // East Asian Width ベースのセル幅計算。combining mark, ZWJ, 制御文字は 0 幅。
 // サロゲートペア (code point) と全角文字を区別して扱うためのヘルパ群。
 
+/** @param {number} cp */
 const isCombining = (cp) => (
   (cp >= 0x0300 && cp <= 0x036f) ||
   (cp >= 0x0483 && cp <= 0x0489) ||
@@ -17,6 +18,7 @@ const isCombining = (cp) => (
   (cp >= 0xe0100 && cp <= 0xe01ef)
 );
 
+/** @param {number} cp */
 const isWide = (cp) => (
   (cp >= 0x1100 && cp <= 0x115f) ||
   (cp >= 0x2e80 && cp <= 0x303e) ||
@@ -35,21 +37,35 @@ const isWide = (cp) => (
   (cp >= 0x30000 && cp <= 0x3fffd)
 );
 
+/**
+ * @param {number} cp
+ * @returns {number}
+ */
 export const cpWidth = (cp) => {
   if (cp < 0x20 || cp === 0x7f || isCombining(cp)) return 0;
   return isWide(cp) ? 2 : 1;
 };
 
+/**
+ * @param {string} s
+ * @returns {number}
+ */
 export const strWidth = (s) => {
   let w = 0;
-  for (const ch of s) w += cpWidth(ch.codePointAt(0));
+  for (const ch of s) w += cpWidth(/** @type {number} */ (ch.codePointAt(0)));
   return w;
 };
 
+/**
+ * @param {string} s
+ * @param {number} start
+ * @param {number} end
+ * @returns {number}
+ */
 export const strWidthRange = (s, start, end) => {
   let w = 0;
   for (let i = start; i < end;) {
-    const cp = s.codePointAt(i);
+    const cp = /** @type {number} */ (s.codePointAt(i));
     w += cpWidth(cp);
     i += cp > 0xffff ? 2 : 1;
   }
@@ -57,10 +73,20 @@ export const strWidthRange = (s, start, end) => {
 };
 
 // 低サロゲート中間を指していたら直前の高サロゲートへスナップ
+/**
+ * @param {string} s
+ * @param {number} i
+ * @returns {number}
+ */
 export const cpStart = (s, i) => {
   const c = s.charCodeAt(i);
   return (c >= 0xdc00 && c <= 0xdfff) ? i - 1 : i;
 };
 
 // i 位置の code point の UTF-16 長
-export const cpLen = (s, i) => (s.codePointAt(i) > 0xffff ? 2 : 1);
+/**
+ * @param {string} s
+ * @param {number} i
+ * @returns {number}
+ */
+export const cpLen = (s, i) => (/** @type {number} */ (s.codePointAt(i)) > 0xffff ? 2 : 1);

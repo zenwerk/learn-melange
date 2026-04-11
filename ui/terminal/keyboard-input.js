@@ -4,7 +4,22 @@
 
 import { resolveKey } from './readline-keys.js';
 
+/**
+ * @typedef {import('../types.d.ts').ActionName} ActionName
+ * @typedef {import('../types.d.ts').ComposeEvent} ComposeEvent
+ */
+
+/**
+ * @typedef {object} KeyboardInputOptions
+ * @property {HTMLElement} host
+ * @property {(action: ActionName) => void} onAction
+ * @property {(text: string) => void} onInsert
+ * @property {(ev: ComposeEvent) => void} onCompose
+ * @property {(e: KeyboardEvent) => boolean} onRawKey
+ */
+
 export class KeyboardInput {
+  /** @param {KeyboardInputOptions} opts */
   constructor({ host, onAction, onInsert, onCompose, onRawKey }) {
     this.host = host;
     this.onAction = onAction;
@@ -44,7 +59,7 @@ export class KeyboardInput {
     });
 
     ta.addEventListener('input', (e) => {
-      if (e.isComposing) return;
+      if (/** @type {InputEvent} */ (e).isComposing) return;
       const data = ta.value;
       ta.value = '';
       if (data) this.onInsert?.(data);

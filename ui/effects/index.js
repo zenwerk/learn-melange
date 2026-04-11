@@ -1,3 +1,4 @@
+// @ts-nocheck
 import off from './off.js';
 import crtDefault from './crt-default.js';
 

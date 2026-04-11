@@ -1,3 +1,4 @@
+// @ts-nocheck
 // WebGL2 共通ヘルパ。RenderGraph からのみ利用される想定。
 
 export function createContext(canvas) {

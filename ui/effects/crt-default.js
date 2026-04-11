@@ -1,3 +1,4 @@
+// @ts-nocheck
 // cool-retro-term 風の既定 CRT プロファイル。
 //   source → threshold → blurH → blurV → crt-composite(source, bloom, prev) → screen
 

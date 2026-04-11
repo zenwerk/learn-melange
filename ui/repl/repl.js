@@ -23,13 +23,26 @@ import { createSessionClient } from '../language/session-client.js';
 import { createLanguageClient } from '../language/language-client.js';
 import { CompletionPopup } from './completion-popup.js';
 
+/**
+ * @typedef {import('../types.d.ts').CellStyle} CellStyle
+ * @typedef {import('../types.d.ts').Segment} Segment
+ * @typedef {import('../types.d.ts').ActionName} ActionName
+ * @typedef {import('../types.d.ts').ComposeEvent} ComposeEvent
+ * @typedef {import('../types.d.ts').EvalResultObj} EvalResultObj
+ */
+
 const PROMPT = 'calc> ';
 const FONT_SIZE_DEFAULT = 14;
 const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 40;
 const TERMINAL_PAD = 12; // style.css #terminal-wrap の padding と合わせること
 
-const style = (fg, extra = null) => ({ fg, ...extra });
+/**
+ * @param {string | null} fg
+ * @param {Partial<CellStyle>} [extra]
+ * @returns {CellStyle}
+ */
+const style = (fg, extra = {}) => ({ fg, ...extra });
 const S = Object.freeze({
   greenBold:  style('green', { bold: true }),
   blue:       style('blue'),
@@ -40,6 +53,7 @@ const S = Object.freeze({
 });
 
 export class ReplUI {
+  /** @param {{ mount: HTMLElement }} opts */
   constructor({ mount }) {
     this.mount = mount;
 
@@ -79,13 +93,21 @@ export class ReplUI {
 
     this.cursorRow = 0;
     this.awaitingInput = false;
+    /** @type {((line: string) => void) | null} */
     this.submitResolve = null;
+    /** @type {ReturnType<typeof setInterval> | null} */
     this.blinkTimer = null;
+    /** @type {(() => void) | null} */
     this.onResize = null;
   }
 
   // 副作用ハンドラを包む薄いラッパ。例外が出ても finally で必ず
   // requestRender を呼ぶので、描画の呼び忘れが構造的に発生しない。
+  /**
+   * @template T
+   * @param {() => T} fn
+   * @returns {T}
+   */
   #withRender(fn) {
     try {
       return fn();
@@ -149,6 +171,7 @@ export class ReplUI {
 
   // ------------- 出力 -------------
 
+  /** @param {string | Segment | (string | Segment)[]} segments */
   #println(segments) {
     const parts = Array.isArray(segments) ? segments : [segments];
     let row = this.cursorRow;
@@ -156,7 +179,7 @@ export class ReplUI {
     const onWrap = () => { this.#newline(); return { row: this.cursorRow, col: 0 }; };
     for (const seg of parts) {
       const text = typeof seg === 'string' ? seg : seg.text;
-      const st   = typeof seg === 'string' ? null : seg.style;
+      const st   = typeof seg === 'string' ? null : (seg.style ?? null);
       ({ row, col } = writeCells(this.buffer, row, col, text, st, onWrap));
     }
     this.#newline();
@@ -173,6 +196,7 @@ export class ReplUI {
 
   // 入力中の割り込みメッセージ。editor が占めていた行をクリアして
   // メッセージを書き、次の行で editor を同じ入力内容のまま再開する。
+  /** @param {Segment[]} segments */
   #printAboveInput(segments) {
     if (!this.awaitingInput) {
       this.#println(segments);
@@ -189,6 +213,10 @@ export class ReplUI {
 
   // ------------- 入力 -------------
 
+  /**
+   * @param {string} prompt
+   * @returns {Promise<string>}
+   */
   #readLine(prompt) {
     return new Promise((resolve) => {
       this.submitResolve = resolve;
@@ -199,6 +227,7 @@ export class ReplUI {
     });
   }
 
+  /** @param {string} line */
   #handleSubmit(line) {
     this.awaitingInput = false;
     this.completionPopup.hide();
@@ -208,6 +237,7 @@ export class ReplUI {
     r?.(line);
   }
 
+  /** @param {ActionName} action */
   #handleAction(action) {
     if (!this.awaitingInput) return;
 
@@ -241,6 +271,7 @@ export class ReplUI {
     }
   }
 
+  /** @param {number} delta */
   #handleCompleteNav(delta) {
     if (this.completionPopup.isVisible()) {
       this.completionPopup.moveSelection(delta);
@@ -266,15 +297,20 @@ export class ReplUI {
     this.completionPopup.show(items, row, col);
   }
 
+  /** @param {ComposeEvent} ev */
   #handleCompose(ev) {
     if (!this.awaitingInput) return;
-    if (ev.phase === 'update') this.editor.setComposing(ev.text);
-    else if (ev.phase === 'end') this.editor.endComposing(ev.text);
+    if (ev.phase === 'update') this.editor.setComposing(ev.text ?? '');
+    else if (ev.phase === 'end') this.editor.endComposing(ev.text ?? '');
     else if (ev.phase === 'start') this.editor.setComposing('');
   }
 
   // onRawKey は戻り値 bool を返す必要があるため、処理した場合のみ
   // 内側で withRender を呼ぶ。
+  /**
+   * @param {KeyboardEvent} e
+   * @returns {boolean}
+   */
   #handleRawKey(e) {
     if (!(e.ctrlKey || e.metaKey)) return false;
     const k = e.key;
@@ -312,8 +348,10 @@ export class ReplUI {
     }
   }
 
+  /** @param {number} delta */
   #zoom(delta) { this.#setFontSize(this.fontSize + delta); }
 
+  /** @param {number} size */
   #setFontSize(size) {
     const clamped = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
     if (clamped === this.fontSize) return;
@@ -352,6 +390,7 @@ export class ReplUI {
     this.#println('');
   }
 
+  /** @param {EvalResultObj} result */
   #printResult(result) {
     if (result.success) {
       if (result.kind === 'expr') {
@@ -375,6 +414,7 @@ export class ReplUI {
     }]);
   }
 
+  /** @param {string} line */
   #handleEffectCommand(line) {
     const parts = line.split(/\s+/);
     if (parts.length === 1) {
