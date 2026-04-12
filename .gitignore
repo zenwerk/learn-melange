@@ -5,6 +5,12 @@ _opam/
 .direnv/
 node_modules/
 .mcp.json
+.claude/
+ui/dist/
+
+# claude-mem auto-generated (ルートの CLAUDE.md だけ残す)
+**/CLAUDE.md
+!./CLAUDE.md
 
 # menhir generated (built by dune rule)
 src/lib/parser.ml
