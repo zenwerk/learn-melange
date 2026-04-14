@@ -169,6 +169,8 @@ export class ReplUI {
       window.removeEventListener('resize', this.onResize);
       this.onResize = null;
     }
+    this.effectPanel?.dispose();
+    this.effects?.dispose();
   }
 
   // ------------- 出力 -------------

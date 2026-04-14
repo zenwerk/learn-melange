@@ -30,12 +30,11 @@ export class EffectPanel {
     this.effects = effects;
     this.mount = mount;
     this.root = null;
-    this.visible = false;
-    this.controls = new Map(); // key -> { el, set(value) }
+    this.controls = new Map();
   }
 
   toggle() {
-    if (this.visible) this.hide();
+    if (this.root && this.root.style.display !== 'none') this.hide();
     else this.show();
   }
 
@@ -43,12 +42,16 @@ export class EffectPanel {
     if (!this.root) this.#build();
     this.#rebuildControls();
     this.root.style.display = 'block';
-    this.visible = true;
   }
 
   hide() {
     if (this.root) this.root.style.display = 'none';
-    this.visible = false;
+  }
+
+  dispose() {
+    this.root?.remove();
+    this.root = null;
+    this.controls.clear();
   }
 
   #build() {

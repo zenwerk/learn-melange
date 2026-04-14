@@ -78,9 +78,6 @@ export class RenderGraph {
     return entry;
   }
 
-  // 宣言的にパス配列をセットする。descriptor は
-  // { name, fs, inputs, output, uniforms } の形。プロファイル切替時の
-  // 差分更新や将来のパラメータ live update の窓口。
   setPasses(descriptors) {
     this.passes = descriptors.map((d) => {
       const { program, locs } = this.#getOrCompile(d.fs);
@@ -100,9 +97,8 @@ export class RenderGraph {
     });
   }
 
-  // uniforms だけを差し替える軽量 update。pass 構成(name/fs/inputs/output)が
-  // 変わった場合は setPasses へフォールバックする。UI スライダーからの
-  // ライブ更新用。
+  // pass 構成は同じで uniforms だけ差し替える軽量 update (UI スライダー用)。
+  // 構成が変わっていたら通常の setPasses にフォールバック。
   updatePassUniforms(descriptors) {
     if (descriptors.length !== this.passes.length) {
       this.setPasses(descriptors);
@@ -113,8 +109,6 @@ export class RenderGraph {
         this.setPasses(descriptors);
         return;
       }
-    }
-    for (let i = 0; i < descriptors.length; i++) {
       this.passes[i].uniforms = descriptors[i].uniforms ?? {};
     }
   }
@@ -157,18 +151,8 @@ export class RenderGraph {
       }
       if (pass.locs['uTime']) gl.uniform1f(pass.locs['uTime'], time);
       if (pass.locs['uResolution']) gl.uniform2f(pass.locs['uResolution'], this.width, this.height);
-      const merged = { ...pass.uniforms, ...globalUniforms };
-      for (const [k, v] of Object.entries(merged)) {
-        const loc = pass.locs[k];
-        if (loc == null) continue;
-        if (typeof v === 'number') gl.uniform1f(loc, v);
-        else if (Array.isArray(v)) {
-          if (v.length === 2) gl.uniform2f(loc, v[0], v[1]);
-          else if (v.length === 3) gl.uniform3f(loc, v[0], v[1], v[2]);
-          else if (v.length === 4) gl.uniform4f(loc, v[0], v[1], v[2], v[3]);
-        }
-      }
-      // 'screen' を指定するパスは実際には 'final' へ描画する
+      this.#applyUniforms(pass.locs, pass.uniforms);
+      this.#applyUniforms(pass.locs, globalUniforms);
       const outName = pass.output === 'screen' ? 'final' : pass.output;
       if (outName) {
         const out = this.textures.get(outName);
@@ -179,24 +163,35 @@ export class RenderGraph {
       this.quad.draw();
     }
 
-    // final → default framebuffer に blit
     this.#blitFinalToScreen();
-    // 次フレームの 'prev' は今フレームの 'final'
-    this.#promoteFinalToPrev();
-    // 一般フィードバック: output ↔ feedbackAs をスワップ
-    this.#swapFeedbackTextures();
-  }
-
-  #swapFeedbackTextures() {
+    this.#swapTextures('prev', 'final');
     for (const pass of this.passes) {
       if (!pass.feedbackAs) continue;
       const outName = pass.output === 'screen' ? 'final' : pass.output;
-      if (!outName || outName === 'final') continue; // final は #promoteFinalToPrev が面倒を見る
-      const outEntry = this.textures.get(outName);
-      const fbEntry = this.textures.get(pass.feedbackAs);
-      this.textures.set(outName, fbEntry);
-      this.textures.set(pass.feedbackAs, outEntry);
+      if (!outName || outName === 'final') continue;
+      this.#swapTextures(outName, pass.feedbackAs);
     }
+  }
+
+  #applyUniforms(locs, uniforms) {
+    for (const k in uniforms) {
+      const loc = locs[k];
+      if (loc == null) continue;
+      const v = uniforms[k];
+      if (typeof v === 'number') this.gl.uniform1f(loc, v);
+      else if (Array.isArray(v)) {
+        if (v.length === 2) this.gl.uniform2f(loc, v[0], v[1]);
+        else if (v.length === 3) this.gl.uniform3f(loc, v[0], v[1], v[2]);
+        else if (v.length === 4) this.gl.uniform4f(loc, v[0], v[1], v[2], v[3]);
+      }
+    }
+  }
+
+  #swapTextures(a, b) {
+    const ta = this.textures.get(a);
+    const tb = this.textures.get(b);
+    this.textures.set(a, tb);
+    this.textures.set(b, ta);
   }
 
   #blitFinalToScreen() {
@@ -207,13 +202,6 @@ export class RenderGraph {
     gl.bindTexture(gl.TEXTURE_2D, this.textures.get('final').tex);
     gl.uniform1i(this.blitLoc, 0);
     this.quad.draw();
-  }
-
-  #promoteFinalToPrev() {
-    const prev = this.textures.get('prev');
-    const final = this.textures.get('final');
-    this.textures.set('prev', final);
-    this.textures.set('final', prev);
   }
 
   dispose() {

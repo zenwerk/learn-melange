@@ -3,6 +3,10 @@ precision highp float;
 
 // GLSL 仕様: #version はファイル先頭 (空白・コメントより前) 必須。
 
+float hash12(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
 // 9-tap Gaussian weights (sigma ≈ 2)
 const float GAUSSIAN_W[5] = float[5](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
 
