@@ -58,6 +58,39 @@ export class EffectManager {
     return next;
   }
 
+  // 個別パラメータをライブ更新する。UI スライダーから呼ぶことを想定。
+  updateParam(key, value) {
+    if (!this.currentProfile) return false;
+    this.params[key] = value;
+    this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
+    this.requestRender();
+    return true;
+  }
+
+  updateParams(partial) {
+    if (!this.currentProfile) return false;
+    Object.assign(this.params, partial);
+    this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
+    this.requestRender();
+    return true;
+  }
+
+  getParams() {
+    return { ...this.params };
+  }
+
+  getParamMeta() {
+    return this.currentProfile?.paramMeta ?? {};
+  }
+
+  resetParams() {
+    if (!this.currentProfile) return false;
+    this.params = { ...this.currentProfile.defaultParams };
+    this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
+    this.requestRender();
+    return true;
+  }
+
   resize(width, height) {
     this.overlayCanvas.width = width;
     this.overlayCanvas.height = height;

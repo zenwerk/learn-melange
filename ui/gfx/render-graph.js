@@ -85,6 +85,7 @@ export class RenderGraph {
     this.passes = descriptors.map((d) => {
       const { program, locs } = this.#getOrCompile(d.fs);
       if (d.output && d.output !== 'screen') this.#ensureTexture(d.output);
+      if (d.feedbackAs) this.#ensureTexture(d.feedbackAs);
       const inputs = d.inputs ?? [];
       for (const inp of inputs) this.#ensureTexture(inp, { withFbo: inp !== 'source' });
       return {
@@ -93,9 +94,29 @@ export class RenderGraph {
         locs,
         inputs,
         output: d.output,
+        feedbackAs: d.feedbackAs ?? null,
         uniforms: d.uniforms ?? {},
       };
     });
+  }
+
+  // uniforms だけを差し替える軽量 update。pass 構成(name/fs/inputs/output)が
+  // 変わった場合は setPasses へフォールバックする。UI スライダーからの
+  // ライブ更新用。
+  updatePassUniforms(descriptors) {
+    if (descriptors.length !== this.passes.length) {
+      this.setPasses(descriptors);
+      return;
+    }
+    for (let i = 0; i < descriptors.length; i++) {
+      if (this.passes[i].name !== descriptors[i].name) {
+        this.setPasses(descriptors);
+        return;
+      }
+    }
+    for (let i = 0; i < descriptors.length; i++) {
+      this.passes[i].uniforms = descriptors[i].uniforms ?? {};
+    }
   }
 
   resize(width, height) {
@@ -162,6 +183,20 @@ export class RenderGraph {
     this.#blitFinalToScreen();
     // 次フレームの 'prev' は今フレームの 'final'
     this.#promoteFinalToPrev();
+    // 一般フィードバック: output ↔ feedbackAs をスワップ
+    this.#swapFeedbackTextures();
+  }
+
+  #swapFeedbackTextures() {
+    for (const pass of this.passes) {
+      if (!pass.feedbackAs) continue;
+      const outName = pass.output === 'screen' ? 'final' : pass.output;
+      if (!outName || outName === 'final') continue; // final は #promoteFinalToPrev が面倒を見る
+      const outEntry = this.textures.get(outName);
+      const fbEntry = this.textures.get(pass.feedbackAs);
+      this.textures.set(outName, fbEntry);
+      this.textures.set(pass.feedbackAs, outEntry);
+    }
   }
 
   #blitFinalToScreen() {

@@ -18,6 +18,7 @@ import { LineEditor } from '../terminal/line-editor.js';
 import { History } from '../terminal/history.js';
 import { KeyboardInput } from '../terminal/keyboard-input.js';
 import { EffectManager } from '../effects/effect-manager.js';
+import { EffectPanel } from '../effects/effect-panel.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
 import { SessionClient } from '../language/session-client.js';
 import { LanguageClient } from '../language/language-client.js';
@@ -128,6 +129,7 @@ export class ReplUI {
       overlayCanvas: this.overlayCanvas,
     });
     this.effects.loadInitial();
+    this.effectPanel = new EffectPanel({ effects: this.effects });
 
     this.onResize = () => this.#withRender(() => this.#relayout());
     window.addEventListener('resize', this.onResize);
@@ -329,6 +331,11 @@ export class ReplUI {
       });
       return true;
     }
+    // Ctrl+Shift+P: effect settings panel 開閉
+    if ((k === 'P' || k === 'p' || code === 'KeyP') && e.shiftKey) {
+      this.effectPanel?.toggle();
+      return true;
+    }
     // Font zoom
     const isPlus  = k === '+' || k === '=' || k === ';' || code === 'Equal' || code === 'Semicolon';
     const isMinus = k === '-' || k === '_' || code === 'Minus';
@@ -384,7 +391,7 @@ export class ReplUI {
     this.#println([{ text: 'Melange Calculator REPL', style: S.greenBold }]);
     this.#println([{
       text: 'readline: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n ↑↓  /' +
-            ' complete: Tab S-Tab Esc  / clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e',
+            ' complete: Tab S-Tab Esc  / clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e / panel: C-S-p',
       style: S.dim,
     }]);
     this.#println('');
