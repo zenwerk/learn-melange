@@ -2,24 +2,24 @@
 // Canvas2D に CellBuffer を描画する。
 // 表示はしない (display:none) — WebGL テクスチャ元として使う。
 // セルサイズは measureText + ascent/descent から算出。
+//
+// テーマは CSS カスタムプロパティを単一ソースとする (theme.js 経由)。
+// DEFAULT_THEME は後方互換のため readTheme() のスナップショットを返す。
 
-export const DEFAULT_THEME = Object.freeze({
-  background: '#11111b',
-  foreground: '#cdd6f4',
-  cursor: '#a6e3a1',
-  selection: '#45475a',
-  dim: '#585b70',
-  colors: {
-    blue: '#89b4fa',
-    yellow: '#f9e2af',
-    red: '#f38ba8',
-    green: '#a6e3a1',
-    gray: '#6c7086',
-    magenta: '#f5c2e7',
-    cyan: '#94e2d5',
-    white: '#cdd6f4',
-  },
-});
+import { readTheme, THEME_FALLBACK } from './theme.js';
+
+/** 後方互換: 既存のテストやエクスポートからの import を壊さないためのエイリアス */
+export const DEFAULT_THEME = THEME_FALLBACK;
+
+// Cell.style.bg には色名 ('popup_bg' 等) または hex を直接格納するケースがある。
+// 名前付きキーは theme から解決する。
+const resolveBg = (bgKey, theme) => {
+  if (!bgKey) return null;
+  if (bgKey === 'popup_bg') return theme.popup.bg;
+  if (bgKey === 'popup_selected_bg') return theme.popup.selectedBg;
+  if (theme.colors[bgKey]) return theme.colors[bgKey];
+  return bgKey;
+};
 
 const resolveFg = (style, theme) => {
   if (!style) return theme.foreground;
@@ -33,13 +33,13 @@ export class TerminalCanvas {
     buffer,
     fontFamily = "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
     fontSize = 14,
-    theme = DEFAULT_THEME,
+    theme = null,
     dpr = window.devicePixelRatio || 1,
   }) {
     this.buffer = buffer;
     this.fontFamily = fontFamily;
     this.fontSize = fontSize;
-    this.theme = theme;
+    this.theme = theme ?? readTheme();
     this.dpr = dpr;
 
     this.canvas = document.createElement('canvas');
@@ -87,6 +87,12 @@ export class TerminalCanvas {
     this.#applySize();
   }
 
+  // テーマ (色) を差し替えて全行を再描画対象にする。
+  setTheme(theme) {
+    this.theme = theme;
+    this.buffer.markAllDirty();
+  }
+
   resizeBuffer(rows, cols) {
     this.buffer.resize(rows, cols);
     this.#applySize();
@@ -126,10 +132,11 @@ export class TerminalCanvas {
         if (!cell || cell.ch === null) continue;
 
         // セル個別の背景色 (補完ポップアップ等で使用)
-        const bg = cell.style?.bg;
-        if (bg) {
+        const bgKey = cell.style?.bg;
+        const bgColor = resolveBg(bgKey, theme);
+        if (bgColor) {
           const cellW = cw * (cell.width === 2 ? 2 : 1);
-          ctx.fillStyle = theme.colors[bg] ?? bg;
+          ctx.fillStyle = bgColor;
           ctx.fillRect(c * cw, r * ch, cellW, ch);
         }
 

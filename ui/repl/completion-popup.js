@@ -15,8 +15,10 @@ import { makeCell, writeCells } from '../terminal/cell-buffer.js';
 
 const MAX_VISIBLE = 8;
 
-const POPUP_BG = '#1e1e2e';
-const SELECTED_BG = '#313244';
+// cell.style.bg に格納する「色名」。TerminalCanvas 側でテーマ経由に解決される。
+// テーマ切替時にポップアップが表示中でも色が追従する。
+const POPUP_BG = 'popup_bg';
+const SELECTED_BG = 'popup_selected_bg';
 /** @type {CellStyle} */
 const STYLE_DETAIL = { dim: true };
 
