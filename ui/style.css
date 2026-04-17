@@ -1,3 +1,89 @@
+/* -------- Theme tokens (単一ソース) --------
+ * JS から getComputedStyle で読む。 Canvas2D の fillStyle と
+ * WebGL の vec3 uniform を共に駆動する。
+ */
+:root {
+  /* ターミナル基本色 (既定テーマ = melange / catppuccin mocha 相当) */
+  --term-bg: #11111b;
+  --term-fg: #cdd6f4;
+  --term-cursor: #a6e3a1;
+  --term-selection: #45475a;
+  --term-dim: #585b70;
+
+  /* ANSI 名前付き色 */
+  --term-color-blue:    #89b4fa;
+  --term-color-yellow:  #f9e2af;
+  --term-color-red:     #f38ba8;
+  --term-color-green:   #a6e3a1;
+  --term-color-gray:    #6c7086;
+  --term-color-magenta: #f5c2e7;
+  --term-color-cyan:    #94e2d5;
+  --term-color-white:   #cdd6f4;
+
+  /* 補完ポップアップ */
+  --term-popup-bg:          #1e1e2e;
+  --term-popup-selected-bg: #313244;
+
+  /* ビューポート周辺 */
+  --term-viewport-bg: #0a0a10;
+  --term-frame-bg:    #0f0f18;
+
+  /* EffectPanel (HUD) */
+  --panel-bg:      rgba(20, 20, 28, 0.92);
+  --panel-fg:      #d0d4e0;
+  --panel-border:  #3a3f50;
+  --panel-surface: #1a1d28;
+  --panel-hover:   #2a2f3e;
+}
+
+/* 琥珀色単色 (amber phosphor) */
+body.theme-amber {
+  --term-bg: #140c00;
+  --term-fg: #ffb454;
+  --term-cursor: #ffcf7a;
+  --term-selection: #3a2408;
+  --term-dim: #8a5a1c;
+
+  --term-color-blue:    #c98a3a;
+  --term-color-yellow:  #ffd68a;
+  --term-color-red:     #ff8c4a;
+  --term-color-green:   #ffb454;
+  --term-color-gray:    #6a4a1a;
+  --term-color-magenta: #e99a5a;
+  --term-color-cyan:    #ffc878;
+  --term-color-white:   #ffe0a8;
+
+  --term-popup-bg:          #241806;
+  --term-popup-selected-bg: #3a2a10;
+
+  --term-viewport-bg: #080400;
+  --term-frame-bg:    #120a00;
+}
+
+/* 緑単色 (green phosphor) */
+body.theme-green-phosphor {
+  --term-bg: #001200;
+  --term-fg: #4aff6a;
+  --term-cursor: #7aff8a;
+  --term-selection: #083a18;
+  --term-dim: #1a6a3a;
+
+  --term-color-blue:    #5ad080;
+  --term-color-yellow:  #a8ff9a;
+  --term-color-red:     #ff7a7a;
+  --term-color-green:   #4aff6a;
+  --term-color-gray:    #2a5a3a;
+  --term-color-magenta: #8aff8a;
+  --term-color-cyan:    #9affa0;
+  --term-color-white:   #c8ffb8;
+
+  --term-popup-bg:          #042008;
+  --term-popup-selected-bg: #0a3a1a;
+
+  --term-viewport-bg: #000800;
+  --term-frame-bg:    #000f00;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,13 +91,13 @@
 }
 
 html, body {
-  background: #0a0a10;
+  background: var(--term-viewport-bg);
   height: 100vh;
 }
 
 body {
   font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
-  color: #cdd6f4;
+  color: var(--term-fg);
   padding: 20px;
   display: flex;
   justify-content: center;
@@ -21,7 +107,7 @@ body {
   position: relative;
   width: 100%;
   max-width: 960px;
-  background: #0f0f18;
+  background: var(--term-frame-bg);
   border-radius: 12px;
   padding: 12px;
   height: calc(100vh - 40px);
@@ -64,4 +150,94 @@ body {
   font-size: 1px;
   padding: 0;
   margin: 0;
+}
+
+/* -------- EffectPanel (HUD) -------- */
+.effect-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 280px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: none;
+}
+
+.effect-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.effect-panel__close {
+  background: transparent;
+  color: inherit;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.effect-panel__label {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.effect-panel__select {
+  width: 100%;
+  margin-bottom: 10px;
+  background: var(--panel-surface);
+  color: var(--panel-fg);
+  border: 1px solid var(--panel-border);
+  padding: 4px;
+}
+
+.effect-panel__reset {
+  width: 100%;
+  margin-bottom: 10px;
+  background: var(--panel-hover);
+  color: var(--panel-fg);
+  border: 1px solid var(--panel-border);
+  padding: 4px;
+  cursor: pointer;
+}
+
+.effect-panel__row {
+  margin-bottom: 8px;
+}
+
+.effect-panel__row-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.effect-panel__row-value {
+  opacity: 0.7;
+}
+
+.effect-panel__range {
+  width: 100%;
+}
+
+.effect-panel__color {
+  width: 100%;
+  height: 24px;
+}
+
+.effect-panel__row-select {
+  width: 100%;
+  background: var(--panel-surface);
+  color: var(--panel-fg);
+  border: 1px solid var(--panel-border);
 }
