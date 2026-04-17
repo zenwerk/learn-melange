@@ -1,11 +1,45 @@
 // @ts-nocheck
 // EffectManager の paramMeta を読んで UI を自動生成する設定パネル。
-// - プロファイルセレクタ + パラメータスライダー/カラー/セレクト。
+// - テーマセレクタ + プロファイルセレクタ + パラメータスライダー/カラー/セレクト。
 // - 値変更は EffectManager.updateParam 経由でリアルタイム反映。
+// - スタイルは CSS 変数駆動 (style.css の .effect-panel*)。
 
 import { EFFECT_ORDER } from './index.js';
 
 const PANEL_ID = 'effect-panel';
+
+export const THEME_ORDER = ['melange', 'amber', 'green-phosphor'];
+const THEME_STORAGE_KEY = 'melange-repl:theme';
+
+/** <body> のテーマクラスから現在のテーマ名を読み出す。未設定なら 'melange' */
+export function currentTheme() {
+  if (typeof document === 'undefined' || !document.body) return 'melange';
+  for (const name of THEME_ORDER) {
+    if (name === 'melange') continue;
+    if (document.body.classList.contains(`theme-${name}`)) return name;
+  }
+  return 'melange';
+}
+
+/** テーマを <body> の class に適用し localStorage に保存する */
+export function applyTheme(name) {
+  if (typeof document === 'undefined' || !document.body) return;
+  for (const n of THEME_ORDER) {
+    document.body.classList.remove(`theme-${n}`);
+  }
+  if (name && name !== 'melange') {
+    document.body.classList.add(`theme-${name}`);
+  }
+  try { localStorage.setItem(THEME_STORAGE_KEY, name); } catch {}
+}
+
+/** 起動時: localStorage からテーマ名を読んで <body> に適用 */
+export function restoreThemeFromStorage() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved && THEME_ORDER.includes(saved)) applyTheme(saved);
+  } catch {}
+}
 
 /** vec3 (0-1) → #rrggbb */
 function rgbToHex(rgb) {
@@ -57,30 +91,10 @@ export class EffectPanel {
   #build() {
     const root = document.createElement('div');
     root.id = PANEL_ID;
-    Object.assign(root.style, {
-      position: 'fixed',
-      top: '16px',
-      right: '16px',
-      width: '280px',
-      maxHeight: 'calc(100vh - 32px)',
-      overflowY: 'auto',
-      background: 'rgba(20, 20, 28, 0.92)',
-      color: '#d0d4e0',
-      padding: '12px 14px',
-      border: '1px solid #3a3f50',
-      borderRadius: '8px',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      fontSize: '11px',
-      zIndex: '1000',
-      boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-      display: 'none',
-    });
+    root.className = 'effect-panel';
 
     const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.alignItems = 'center';
-    header.style.marginBottom = '8px';
+    header.className = 'effect-panel__header';
 
     const title = document.createElement('strong');
     title.textContent = 'CRT Effects';
@@ -88,28 +102,40 @@ export class EffectPanel {
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
-    Object.assign(closeBtn.style, {
-      background: 'transparent', color: 'inherit', border: 'none',
-      cursor: 'pointer', fontSize: '16px', lineHeight: '1',
-    });
+    closeBtn.className = 'effect-panel__close';
     closeBtn.addEventListener('click', () => this.hide());
     header.appendChild(closeBtn);
 
     root.appendChild(header);
 
+    // テーマセレクタ
+    const themeLabel = document.createElement('label');
+    themeLabel.textContent = 'Theme';
+    themeLabel.className = 'effect-panel__label';
+    root.appendChild(themeLabel);
+
+    this.themeSelect = document.createElement('select');
+    this.themeSelect.className = 'effect-panel__select';
+    for (const name of THEME_ORDER) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      this.themeSelect.appendChild(opt);
+    }
+    this.themeSelect.value = currentTheme();
+    this.themeSelect.addEventListener('change', () => {
+      applyTheme(this.themeSelect.value);
+    });
+    root.appendChild(this.themeSelect);
+
     // プロファイルセレクタ
     const profLabel = document.createElement('label');
     profLabel.textContent = 'Profile';
-    profLabel.style.display = 'block';
-    profLabel.style.marginBottom = '2px';
+    profLabel.className = 'effect-panel__label';
     root.appendChild(profLabel);
 
     this.profileSelect = document.createElement('select');
-    Object.assign(this.profileSelect.style, {
-      width: '100%', marginBottom: '10px',
-      background: '#1a1d28', color: '#d0d4e0', border: '1px solid #3a3f50',
-      padding: '4px',
-    });
+    this.profileSelect.className = 'effect-panel__select';
     for (const name of EFFECT_ORDER) {
       const opt = document.createElement('option');
       opt.value = name;
@@ -124,11 +150,7 @@ export class EffectPanel {
 
     const resetBtn = document.createElement('button');
     resetBtn.textContent = 'Reset to defaults';
-    Object.assign(resetBtn.style, {
-      width: '100%', marginBottom: '10px',
-      background: '#2a2f3e', color: '#d0d4e0',
-      border: '1px solid #3a3f50', padding: '4px', cursor: 'pointer',
-    });
+    resetBtn.className = 'effect-panel__reset';
     resetBtn.addEventListener('click', () => {
       this.effects.resetParams();
       this.#syncControlValues();
@@ -144,6 +166,7 @@ export class EffectPanel {
 
   #rebuildControls() {
     this.profileSelect.value = this.effects.current() ?? '';
+    this.themeSelect.value = currentTheme();
     this.controlContainer.innerHTML = '';
     this.controls.clear();
 
@@ -164,16 +187,14 @@ export class EffectPanel {
 
   #buildRow(key, meta, initialValue) {
     const row = document.createElement('div');
-    row.style.marginBottom = '8px';
+    row.className = 'effect-panel__row';
 
     const label = document.createElement('label');
-    label.style.display = 'flex';
-    label.style.justifyContent = 'space-between';
-    label.style.marginBottom = '2px';
+    label.className = 'effect-panel__row-label';
     const nameSpan = document.createElement('span');
     nameSpan.textContent = meta.label ?? key;
     const valueSpan = document.createElement('span');
-    valueSpan.style.opacity = '0.7';
+    valueSpan.className = 'effect-panel__row-value';
     label.appendChild(nameSpan);
     label.appendChild(valueSpan);
     row.appendChild(label);
@@ -185,7 +206,7 @@ export class EffectPanel {
       input.max = String(meta.max ?? 1);
       input.step = String(meta.step ?? 0.01);
       input.value = String(initialValue ?? 0);
-      input.style.width = '100%';
+      input.className = 'effect-panel__range';
       valueSpan.textContent = Number(input.value).toFixed(3);
       input.addEventListener('input', () => {
         const v = Number(input.value);
@@ -205,10 +226,7 @@ export class EffectPanel {
 
     if (meta.type === 'select') {
       const select = document.createElement('select');
-      select.style.width = '100%';
-      Object.assign(select.style, {
-        background: '#1a1d28', color: '#d0d4e0', border: '1px solid #3a3f50',
-      });
+      select.className = 'effect-panel__row-select';
       for (const opt of meta.options ?? []) {
         const o = document.createElement('option');
         o.value = String(opt.value);
@@ -232,8 +250,7 @@ export class EffectPanel {
       const input = document.createElement('input');
       input.type = 'color';
       input.value = rgbToHex(initialValue ?? [1, 1, 1]);
-      input.style.width = '100%';
-      input.style.height = '24px';
+      input.className = 'effect-panel__color';
       valueSpan.textContent = input.value;
       input.addEventListener('input', () => {
         valueSpan.textContent = input.value;
