@@ -6,11 +6,15 @@
 import { defineProfile } from './profile-base.js';
 import { crtPasses, CRT_DEFAULTS, CRT_PARAM_META } from './crt-passes.js';
 
+// fontColor / bgColor を null にすると EffectManager が現在テーマの
+// --term-fg / --term-bg から自動解決する (sentinel)。
+// crt-amber / crt-green 等の「プロファイル固有色が主役」なプロファイルは
+// 従来通り固定 vec3 を持つ。
 export default defineProfile({
   name: 'crt-default',
-  description: 'cool-retro-term 風のデフォルト CRT',
+  description: 'cool-retro-term 風のデフォルト CRT (テーマ連動)',
   animated: true,
-  defaultParams: { ...CRT_DEFAULTS },
+  defaultParams: { ...CRT_DEFAULTS, fontColor: null, bgColor: null },
   paramMeta: CRT_PARAM_META,
   passes: crtPasses,
 });

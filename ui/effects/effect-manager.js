@@ -9,12 +9,18 @@
 import { createContext } from '../gfx/gl.js';
 import { RenderGraph } from '../gfx/render-graph.js';
 import { EFFECTS, EFFECT_ORDER } from './index.js';
+import { readTheme, themeToVec3, onThemeChange } from '../terminal/theme.js';
 
 const STORAGE_KEY = 'melange-repl:effect';
+
+// プロファイルが defaultParams に null を入れると「テーマ値から自動解決」の合図。
+// crt-default の fontColor / bgColor で使用。
+const THEMED_PARAM_KEYS = /** @type {const} */ (['fontColor', 'bgColor']);
 
 export class EffectManager {
   #rafHandle = null;
   #renderRequested = false;
+  #themeUnsub = null;
 
   constructor({ terminalCanvas, overlayCanvas }) {
     this.terminalCanvas = terminalCanvas;
@@ -28,6 +34,45 @@ export class EffectManager {
     this.currentProfile = null;
     this.params = {};
     this.startTime = performance.now() / 1000;
+
+    this.#themeUnsub = onThemeChange(() => this.#onThemeChanged());
+  }
+
+  // defaultParams の null を theme 値 (vec3) で埋める。プロファイル固有色 (crt-amber
+  // の琥珀色 vec3 等) は null でないため影響しない。
+  #resolveThemedParams(params) {
+    const theme = readTheme();
+    const fg = themeToVec3(theme.foreground);
+    const bg = themeToVec3(theme.background);
+    for (const key of THEMED_PARAM_KEYS) {
+      if (params[key] === null) {
+        params[key] = key === 'fontColor' ? fg : bg;
+      }
+    }
+    return params;
+  }
+
+  #onThemeChanged() {
+    // MutationObserver は style が適用される前に発火しうる。
+    // 1 フレーム待ってから getComputedStyle を叩く。
+    requestAnimationFrame(() => {
+      this.terminalCanvas.setTheme(readTheme());
+      if (this.currentProfile) {
+        // defaultParams が null のキーだけを再解決する。
+        // 既存の params を破壊しないよう sentinel ロジックを手書き。
+        const defaults = this.currentProfile.defaultParams ?? {};
+        const theme = readTheme();
+        const fg = themeToVec3(theme.foreground);
+        const bg = themeToVec3(theme.background);
+        for (const key of THEMED_PARAM_KEYS) {
+          if (defaults[key] === null) {
+            this.params[key] = key === 'fontColor' ? fg : bg;
+          }
+        }
+        this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
+      }
+      this.requestRender();
+    });
   }
 
   list() {
@@ -43,7 +88,7 @@ export class EffectManager {
     if (!profile) return false;
     this.currentProfile = profile;
     this.currentName = name;
-    this.params = { ...profile.defaultParams };
+    this.params = this.#resolveThemedParams({ ...profile.defaultParams });
     this.graph.setPasses(profile.passes(this.params));
     localStorage.setItem(STORAGE_KEY, name);
     this.#updateLoop();
@@ -85,7 +130,7 @@ export class EffectManager {
 
   resetParams() {
     if (!this.currentProfile) return false;
-    this.params = { ...this.currentProfile.defaultParams };
+    this.params = this.#resolveThemedParams({ ...this.currentProfile.defaultParams });
     this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
     this.requestRender();
     return true;
@@ -136,6 +181,8 @@ export class EffectManager {
 
   dispose() {
     if (this.#rafHandle != null) cancelAnimationFrame(this.#rafHandle);
+    this.#themeUnsub?.();
+    this.#themeUnsub = null;
     this.graph.dispose();
   }
 }
