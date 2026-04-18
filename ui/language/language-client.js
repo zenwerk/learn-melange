@@ -1,10 +1,11 @@
-// LanguageBackend を受け取り、Tab 押下の連打で同じ位置に再問い合わせしない
-// よう直近 1 件だけキャッシュする薄い層。diagnose/hover/tokens は現状
-// 未使用のため wrap しない。
+// LanguageBackend を ReplUI が直接保持せずに済ませるためのラッパ。
+// complete は Tab 連打時の直近 1 件キャッシュを持ち、eval はそのまま委譲する。
+// diagnose/hover/tokens は現状未使用のため wrap しない。
 
 /**
  * @typedef {import('./backend.d.ts').LanguageBackend} LanguageBackend
  * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
+ * @typedef {import('../types.d.ts').EvalResultObj} EvalResultObj
  */
 
 export class LanguageClient {
@@ -15,6 +16,14 @@ export class LanguageClient {
     this._lastCompleteKey = null;
     /** @type {CompletionItem[] | null} */
     this._lastCompleteItems = null;
+  }
+
+  /**
+   * @param {string} input
+   * @returns {EvalResultObj}
+   */
+  eval(input) {
+    return this.backend.eval(input);
   }
 
   /**

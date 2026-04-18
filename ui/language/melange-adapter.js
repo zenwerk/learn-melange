@@ -8,8 +8,6 @@
 import { create_session } from 'melange-output/src/main.js';
 import { SessionClient } from './session-client.js';
 
-export { melangeProfile } from './melange-profile.js';
-
 /**
  * @typedef {import('./backend.d.ts').LanguageBackend} LanguageBackend
  */

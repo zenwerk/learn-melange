@@ -44,7 +44,6 @@ export class ReplUI {
   /** @param {{ mount: HTMLElement, backend: LanguageBackend, profile: LanguageProfile }} opts */
   constructor({ mount, backend, profile }) {
     this.mount = mount;
-    this.backend = backend;
     this.profile = profile;
 
     // 一旦 80x24 で仮初期化 (フォント読み込み後にリサイズ)
@@ -76,7 +75,10 @@ export class ReplUI {
     });
 
     this.languageClient = new LanguageClient(backend);
-    this.completionPopup = new CompletionPopup({ buffer: this.buffer, profile });
+    this.completionPopup = new CompletionPopup({
+      buffer: this.buffer,
+      completionStyleFor: (kind) => profile.completionStyleFor(kind),
+    });
     this.effects = null; // フォント読み込み後に生成
     this.fontSize = FONT_SIZE_DEFAULT;
 
@@ -142,7 +144,7 @@ export class ReplUI {
           this.#handleEffectCommand(trimmed);
           return;
         }
-        const result = this.backend.eval(trimmed);
+        const result = this.languageClient.eval(trimmed);
         this.#printResult(result);
       });
     }

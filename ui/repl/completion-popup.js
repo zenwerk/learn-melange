@@ -11,7 +11,7 @@ import { BG_POPUP, BG_POPUP_SELECTED } from '../terminal/cell-style-keys.js';
  * @typedef {import('../types.d.ts').Cell} Cell
  * @typedef {import('../types.d.ts').CellStyle} CellStyle
  * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
- * @typedef {import('../language/backend.d.ts').LanguageProfile} LanguageProfile
+ * @typedef {(kind: string) => CellStyle | null} CompletionStyleFor
  */
 
 const MAX_VISIBLE = 8;
@@ -27,10 +27,10 @@ const STYLE_DETAIL = { dim: true };
 const withBg = (style, bg) => style ? { ...style, bg } : { bg };
 
 export class CompletionPopup {
-  /** @param {{ buffer: CellBuffer, profile?: LanguageProfile | null }} opts */
-  constructor({ buffer, profile = null }) {
+  /** @param {{ buffer: CellBuffer, completionStyleFor: CompletionStyleFor }} opts */
+  constructor({ buffer, completionStyleFor }) {
     this.buffer = buffer;
-    this.profile = profile;
+    this.completionStyleFor = completionStyleFor;
 
     /** @type {CompletionItem[]} */
     this.items = [];
@@ -180,7 +180,7 @@ export class CompletionPopup {
 
       const isSel = i === this.selection;
       const bgColor = isSel ? BG_POPUP_SELECTED : BG_POPUP;
-      const baseStyle = this.profile?.completionStyleFor(item.kind) ?? null;
+      const baseStyle = this.completionStyleFor(item.kind);
       const labelStyle = isSel ? withBg(baseStyle, BG_POPUP_SELECTED) : baseStyle;
       const detailStyle = isSel ? withBg(STYLE_DETAIL, BG_POPUP_SELECTED) : STYLE_DETAIL;
 

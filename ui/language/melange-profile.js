@@ -52,10 +52,11 @@ export const melangeProfile = {
     /** @type {Segment[][]} */
     const out = [];
     const col = r.error_column;
-    if (col !== null && col > 0) {
+    const hasCol = col !== null && col > 0;
+    if (hasCol) {
       out.push([{ text: `${' '.repeat(promptLen + col)}^`, style: S.red }]);
     }
-    const suffix = col !== null && col > 0 ? ` at column ${col}` : '';
+    const suffix = hasCol ? ` at column ${col}` : '';
     out.push([{ text: `Error${suffix}: ${r.error_message}`, style: S.red }]);
     return out;
   },
