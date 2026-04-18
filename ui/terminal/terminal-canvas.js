@@ -68,7 +68,9 @@ export class TerminalCanvas {
   // ピクセル: cellWidth / cellHeight / ascent をフォントから算出。
   #measure() {
     const ctx = this.ctx;
-    ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    this.normalFont = `${this.fontSize}px ${this.fontFamily}`;
+    this.magnifiedFont = `${this.fontSize * MAGNIFY_FACTOR}px ${this.fontFamily}`;
+    ctx.font = this.normalFont;
     ctx.textBaseline = 'alphabetic';
     const m = ctx.measureText('M');
     this.cellWidth = Math.ceil(m.width);
@@ -79,6 +81,7 @@ export class TerminalCanvas {
     const pad = 2;
     this.ascent = ascent + pad;
     this.cellHeight = Math.ceil((ascent + descent) * 1.25) + pad;
+    this.magnifyPadX = Math.ceil(this.cellWidth * (MAGNIFY_FACTOR - 1) / 2);
   }
 
   #applySize() {
@@ -89,7 +92,7 @@ export class TerminalCanvas {
     this.canvas.style.width = `${wPx}px`;
     this.canvas.style.height = `${hPx}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    this.ctx.font = this.normalFont;
     this.ctx.textBaseline = 'alphabetic';
     this.buffer.markAllDirty();
   }
@@ -131,7 +134,8 @@ export class TerminalCanvas {
   draw() {
     const dirty = this.buffer.takeDirtyRows();
     if (dirty.length === 0) return;
-    const { ctx, cellWidth: cw, cellHeight: ch, ascent, theme, buffer } = this;
+    const { ctx, cellWidth: cw, cellHeight: ch, theme, buffer, magnifyPadX } = this;
+    const magnifiedCols = [];
 
     for (const r of dirty) {
       // 行全体の背景を塗り直す。グリフが上下にはみ出して残骸が残らないよう、
@@ -140,7 +144,8 @@ export class TerminalCanvas {
       ctx.fillRect(0, r * ch - 1, buffer.cols * cw, ch + 2);
 
       const row = buffer.grid[r];
-      // Pass1: 通常セル。拡大セルはスキップし Pass2 に回す
+      magnifiedCols.length = 0;
+      // Pass1: 通常セル。拡大セルは col を記録して Pass2 に回す
       // (拡大グリフの左右はみ出し分を通常セル描画で消さないため)。
       for (let c = 0; c < buffer.cols; c++) {
         const cell = row[c];
@@ -155,31 +160,23 @@ export class TerminalCanvas {
         }
 
         if (cell.ch === ' ') continue;
-        if (shouldMagnify(cell.ch)) continue;
+        if (shouldMagnify(cell.ch)) { magnifiedCols.push(c); continue; }
 
         ctx.fillStyle = resolveFg(cell.style, theme);
-        ctx.save();
-        ctx.beginPath();
         const cellW = cw * (cell.width === 2 ? 2 : 1);
-        ctx.rect(c * cw, r * ch, cellW, ch);
-        ctx.clip();
-        this.#drawGlyph(cell.ch, c * cw, r * ch, cellW);
-        ctx.restore();
+        this.#clipRect(c * cw, r * ch, cellW, ch, () => {
+          this.#drawGlyph(cell.ch, c * cw, r * ch, cellW, false);
+        });
       }
-      // Pass2: 拡大セル。左右に padX 余白を取った広い clip で描画し、
+      // Pass2: 拡大セル。左右に magnifyPadX を取った広い clip で描画し、
       // 隣セルの端にわずかに被せる (後描きなので上書きされる側が拡大グリフ)。
-      for (let c = 0; c < buffer.cols; c++) {
+      for (const c of magnifiedCols) {
         const cell = row[c];
-        if (!cell || cell.ch === null || !shouldMagnify(cell.ch)) continue;
         const cellW = cw * (cell.width === 2 ? 2 : 1);
-        const padX = Math.ceil(cw * (MAGNIFY_FACTOR - 1) / 2);
         ctx.fillStyle = resolveFg(cell.style, theme);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(c * cw - padX, r * ch, cellW + padX * 2, ch);
-        ctx.clip();
-        this.#drawGlyph(cell.ch, c * cw, r * ch, cellW);
-        ctx.restore();
+        this.#clipRect(c * cw - magnifyPadX, r * ch, cellW + magnifyPadX * 2, ch, () => {
+          this.#drawGlyph(cell.ch, c * cw, r * ch, cellW, true);
+        });
       }
     }
 
@@ -192,37 +189,53 @@ export class TerminalCanvas {
         ctx.fillStyle = theme.cursor;
         ctx.fillRect(col * cw, row * ch, cw * width, ch);
         if (cell && cell.ch && cell.ch !== ' ' && cell.ch !== null) {
-          const padX = shouldMagnify(cell.ch)
-            ? Math.ceil(cw * (MAGNIFY_FACTOR - 1) / 2) : 0;
+          const mag = shouldMagnify(cell.ch);
+          const padX = mag ? this.magnifyPadX : 0;
           ctx.fillStyle = theme.background;
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(col * cw - padX, row * ch, cw * width + padX * 2, ch);
-          ctx.clip();
-          this.#drawGlyph(cell.ch, col * cw, row * ch, cw * width);
-          ctx.restore();
+          this.#clipRect(col * cw - padX, row * ch, cw * width + padX * 2, ch, () => {
+            this.#drawGlyph(cell.ch, col * cw, row * ch, cw * width, mag);
+          });
         }
       }
     }
   }
 
-  // セル (x, y, cellW) にグリフを描く。対象文字は MAGNIFY_FACTOR で拡大し、
-  // セル中心に揃える。それ以外は通常フォントで ascent ベースラインに揃える。
-  // fillStyle は呼び出し側で設定済みである前提。
-  #drawGlyph(ch, x, y, cellW) {
-    const { ctx, cellHeight: ch_, ascent, fontSize, fontFamily } = this;
-    if (shouldMagnify(ch)) {
-      const bigSize = fontSize * MAGNIFY_FACTOR;
-      ctx.font = `${bigSize}px ${fontFamily}`;
+  // 矩形 clip で fn を実行し、ctx 状態を save/restore で確実に戻す。
+  // fn 内で font/textAlign/textBaseline を変更しても呼び出し後には復元される。
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} w
+   * @param {number} h
+   * @param {() => void} fn
+   */
+  #clipRect(x, y, w, h, fn) {
+    const { ctx } = this;
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      fn();
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  // セル (x, y, cellW) にグリフを描く。magnify=true なら拡大フォントでセル中心に、
+  // false なら通常フォントで ascent ベースラインに描く。
+  // fillStyle / clip は呼び出し側で設定済みで、呼び出し側が ctx.save/restore で
+  // 包んでいる前提なので ctx 状態の手動リセットは不要。
+  #drawGlyph(ch, x, y, cellW, magnify) {
+    const { ctx } = this;
+    if (magnify) {
+      ctx.font = this.magnifiedFont;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(ch, x + cellW / 2, y + ch_ / 2);
-      ctx.font = `${fontSize}px ${fontFamily}`;
-      ctx.textAlign = 'start';
-      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(ch, x + cellW / 2, y + this.cellHeight / 2);
       return;
     }
-    ctx.fillText(ch, x, y + ascent);
+    ctx.fillText(ch, x, y + this.ascent);
   }
 
   // 親要素のピクセルサイズから rows/cols を計算 (FitAddon 相当)
