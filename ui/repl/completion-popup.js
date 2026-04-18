@@ -11,20 +11,13 @@ import { BG_POPUP, BG_POPUP_SELECTED } from '../terminal/cell-style-keys.js';
  * @typedef {import('../types.d.ts').Cell} Cell
  * @typedef {import('../types.d.ts').CellStyle} CellStyle
  * @typedef {import('../types.d.ts').CompletionItem} CompletionItem
- * @typedef {import('../types.d.ts').CompletionKind} CompletionKind
+ * @typedef {import('../language/backend.d.ts').LanguageProfile} LanguageProfile
  */
 
 const MAX_VISIBLE = 8;
 
 /** @type {CellStyle} */
 const STYLE_DETAIL = { dim: true };
-
-/** @type {Partial<Record<CompletionKind, CellStyle>>} */
-const KIND_STYLE = {
-  variable: { fg: 'yellow' },
-  keyword:  { fg: 'magenta' },
-  operator: { fg: 'cyan' },
-};
 
 /**
  * @param {CellStyle | null | undefined} style
@@ -34,9 +27,10 @@ const KIND_STYLE = {
 const withBg = (style, bg) => style ? { ...style, bg } : { bg };
 
 export class CompletionPopup {
-  /** @param {{ buffer: CellBuffer }} opts */
-  constructor({ buffer }) {
+  /** @param {{ buffer: CellBuffer, profile?: LanguageProfile | null }} opts */
+  constructor({ buffer, profile = null }) {
     this.buffer = buffer;
+    this.profile = profile;
 
     /** @type {CompletionItem[]} */
     this.items = [];
@@ -186,7 +180,7 @@ export class CompletionPopup {
 
       const isSel = i === this.selection;
       const bgColor = isSel ? BG_POPUP_SELECTED : BG_POPUP;
-      const baseStyle = KIND_STYLE[item.kind] ?? null;
+      const baseStyle = this.profile?.completionStyleFor(item.kind) ?? null;
       const labelStyle = isSel ? withBg(baseStyle, BG_POPUP_SELECTED) : baseStyle;
       const detailStyle = isSel ? withBg(STYLE_DETAIL, BG_POPUP_SELECTED) : STYLE_DETAIL;
 

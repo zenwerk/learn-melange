@@ -11,7 +11,6 @@
 //   4. run() のメインループ内 eval/printResult
 // 新しいエントリポイントを追加する際は必ず #withRender で包むこと。
 
-import { create_session } from 'melange-output/src/main.js';
 import { CellBuffer, writeCells } from '../terminal/cell-buffer.js';
 import { TerminalCanvas } from '../terminal/terminal-canvas.js';
 import { LineEditor } from '../terminal/line-editor.js';
@@ -20,7 +19,6 @@ import { KeyboardInput } from '../terminal/keyboard-input.js';
 import { EffectManager } from '../effects/effect-manager.js';
 import { EffectPanel } from '../effects/effect-panel.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
-import { SessionClient } from '../language/session-client.js';
 import { LanguageClient } from '../language/language-client.js';
 import { CompletionPopup } from './completion-popup.js';
 
@@ -30,33 +28,24 @@ import { CompletionPopup } from './completion-popup.js';
  * @typedef {import('../types.d.ts').ActionName} ActionName
  * @typedef {import('../types.d.ts').ComposeEvent} ComposeEvent
  * @typedef {import('../types.d.ts').EvalResultObj} EvalResultObj
+ * @typedef {import('../language/backend.d.ts').LanguageBackend} LanguageBackend
+ * @typedef {import('../language/backend.d.ts').LanguageProfile} LanguageProfile
  */
 
-const PROMPT = 'calc> ';
 const FONT_SIZE_DEFAULT = 14;
 const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 40;
 const TERMINAL_PAD = 12; // style.css #terminal-wrap の padding と合わせること
 
-/**
- * @param {string | null} fg
- * @param {Partial<CellStyle>} [extra]
- * @returns {CellStyle}
- */
-const style = (fg, extra = {}) => ({ fg, ...extra });
-const S = Object.freeze({
-  greenBold:  style('green', { bold: true }),
-  blue:       style('blue'),
-  yellow:     style('yellow'),
-  red:        style('red'),
-  gray:       style('gray'),
-  dim:        style(null,   { dim: true }),
-});
+const DIM = { fg: null, dim: true };
+const RED = { fg: 'red' };
 
 export class ReplUI {
-  /** @param {{ mount: HTMLElement }} opts */
-  constructor({ mount }) {
+  /** @param {{ mount: HTMLElement, backend: LanguageBackend, profile: LanguageProfile }} opts */
+  constructor({ mount, backend, profile }) {
     this.mount = mount;
+    this.backend = backend;
+    this.profile = profile;
 
     // 一旦 80x24 で仮初期化 (フォント読み込み後にリサイズ)
     this.buffer = new CellBuffer(24, 80);
@@ -86,9 +75,8 @@ export class ReplUI {
       onRawKey: (e) => this.#handleRawKey(e),
     });
 
-    this.session = new SessionClient(create_session());
-    this.languageClient = new LanguageClient(this.session);
-    this.completionPopup = new CompletionPopup({ buffer: this.buffer });
+    this.languageClient = new LanguageClient(backend);
+    this.completionPopup = new CompletionPopup({ buffer: this.buffer, profile });
     this.effects = null; // フォント読み込み後に生成
     this.fontSize = FONT_SIZE_DEFAULT;
 
@@ -145,7 +133,7 @@ export class ReplUI {
     this.#withRender(() => this.#banner());
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const line = await this.#readLine(PROMPT);
+      const line = await this.#readLine(this.profile.prompt);
       const trimmed = line.trim();
       if (!trimmed) continue;
 
@@ -154,7 +142,7 @@ export class ReplUI {
           this.#handleEffectCommand(trimmed);
           return;
         }
-        const result = this.session.eval(trimmed);
+        const result = this.backend.eval(trimmed);
         this.#printResult(result);
       });
     }
@@ -212,7 +200,7 @@ export class ReplUI {
     this.buffer.clearRun(row, 0, this.buffer.cols);
     this.cursorRow = row;
     this.#println(segments);
-    this.editor.begin(PROMPT, this.cursorRow, { input: savedInput, cursor: savedCursor });
+    this.editor.begin(this.profile.prompt, this.cursorRow, { input: savedInput, cursor: savedCursor });
   }
 
   // ------------- 入力 -------------
@@ -329,7 +317,7 @@ export class ReplUI {
     if ((k === 'E' || k === 'e' || code === 'KeyE') && e.shiftKey) {
       this.#withRender(() => {
         const next = this.effects?.cycle();
-        if (next) this.#printAboveInput([{ text: `effect: ${next}`, style: S.dim }]);
+        if (next) this.#printAboveInput([{ text: `effect: ${next}`, style: DIM }]);
       });
       return true;
     }
@@ -353,7 +341,7 @@ export class ReplUI {
     this.buffer.clear();
     this.cursorRow = 0;
     if (this.awaitingInput) {
-      this.editor.begin(PROMPT, this.cursorRow);
+      this.editor.begin(this.profile.prompt, this.cursorRow);
     }
   }
 
@@ -384,43 +372,24 @@ export class ReplUI {
     this.overlayCanvas.width = this.terminalCanvas.canvas.width;
     this.overlayCanvas.height = this.terminalCanvas.canvas.height;
     if (this.effects) this.effects.resize(this.overlayCanvas.width, this.overlayCanvas.height);
-    if (this.awaitingInput) this.editor.begin(PROMPT, this.cursorRow);
+    if (this.awaitingInput) this.editor.begin(this.profile.prompt, this.cursorRow);
   }
 
   // ------------- バナー & フォーマット -------------
 
   #banner() {
-    this.#println([{ text: 'Melange Calculator REPL', style: S.greenBold }]);
-    this.#println([{
-      text: 'readline: C-a C-e C-b C-f C-h C-k C-u C-w M-b M-f  / history: C-p C-n ↑↓  /' +
-            ' complete: Tab S-Tab Esc  / clear: C-l  / zoom: C-= C-- C-0  / effect: :effect / C-S-e / panel: C-S-p',
-      style: S.dim,
-    }]);
-    this.#println('');
+    for (const line of this.profile.banner) this.#println(line);
   }
 
   /** @param {EvalResultObj} result */
   #printResult(result) {
     if (result.success) {
-      if (result.kind === 'expr') {
-        this.#println([{ text: `- : float = ${result.value}`, style: S.blue }]);
-      } else {
-        this.#println([{ text: `val ${result.name} : float = ${result.value}`, style: S.yellow }]);
-      }
+      this.#println(this.profile.formatResult(result));
       return;
     }
-    const col = result.error_column;
-    if (col !== null && col > 0) {
-      this.#println([{
-        text: `${' '.repeat(PROMPT.length + col)}^`,
-        style: S.red,
-      }]);
+    for (const line of this.profile.formatError(result, this.profile.prompt.length)) {
+      this.#println(line);
     }
-    const colSuffix = col !== null && col > 0 ? ` at column ${col}` : '';
-    this.#println([{
-      text: `Error${colSuffix}: ${result.error_message}`,
-      style: S.red,
-    }]);
   }
 
   /** @param {string} line */
@@ -429,16 +398,16 @@ export class ReplUI {
     if (parts.length === 1) {
       this.#println([{
         text: `current: ${this.effects?.current()} / available: ${EFFECT_ORDER.join(', ')}`,
-        style: S.dim,
+        style: DIM,
       }]);
       return;
     }
     const name = parts[1];
     if (!EFFECTS.has(name)) {
-      this.#println([{ text: `unknown effect: ${name}`, style: S.red }]);
+      this.#println([{ text: `unknown effect: ${name}`, style: RED }]);
       return;
     }
     this.effects?.set(name);
-    this.#println([{ text: `effect: ${name}`, style: S.dim }]);
+    this.#println([{ text: `effect: ${name}`, style: DIM }]);
   }
 }

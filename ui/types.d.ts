@@ -22,18 +22,21 @@ export type SessionRequest = {
   offset?: number;
 };
 
-export type EvalResultKind = 'expr' | 'binding' | 'error';
+// enum は言語アダプタが自由に拡張できるよう string に緩和する。
+// 既存 OCaml/Melange 実装が返す値 ('expr' | 'binding' | 'error' 等) は
+// 部分集合として引き続き有効。新言語は任意の文字列を返してよい。
+export type EvalResultKind = string;
 
 export interface EvalResultObj {
   success: boolean;
   kind: EvalResultKind;
   name: string | null;
-  value: number | null;
+  value: unknown;
   error_message: string | null;
   error_column: number | null;
 }
 
-export type CompletionKind = 'keyword' | 'variable' | 'operator' | 'function';
+export type CompletionKind = string;
 
 export interface CompletionItem {
   label: string;
@@ -41,7 +44,7 @@ export interface CompletionItem {
   detail: string | null;
 }
 
-export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+export type DiagnosticSeverity = string;
 
 export interface Diagnostic {
   message: string;
@@ -56,12 +59,7 @@ export interface HoverInfo {
   end_col: number;
 }
 
-export type TokenKind =
-  | 'keyword'
-  | 'ident'
-  | 'number'
-  | 'operator'
-  | 'punct';
+export type TokenKind = string;
 
 export interface SemanticToken {
   start_col: number;
