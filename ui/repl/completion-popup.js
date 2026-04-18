@@ -4,6 +4,7 @@
 // show/hide 時に対象行のセルを退避・復元する。
 
 import { makeCell, writeCells } from '../terminal/cell-buffer.js';
+import { BG_POPUP, BG_POPUP_SELECTED } from '../terminal/cell-style-keys.js';
 
 /**
  * @typedef {import('../terminal/cell-buffer.js').CellBuffer} CellBuffer
@@ -15,10 +16,6 @@ import { makeCell, writeCells } from '../terminal/cell-buffer.js';
 
 const MAX_VISIBLE = 8;
 
-// cell.style.bg に格納する「色名」。TerminalCanvas 側でテーマ経由に解決される。
-// テーマ切替時にポップアップが表示中でも色が追従する。
-const POPUP_BG = 'popup_bg';
-const SELECTED_BG = 'popup_selected_bg';
 /** @type {CellStyle} */
 const STYLE_DETAIL = { dim: true };
 
@@ -188,10 +185,10 @@ export class CompletionPopup {
       if (bufRow >= this.buffer.rows) break;
 
       const isSel = i === this.selection;
-      const bgColor = isSel ? SELECTED_BG : POPUP_BG;
+      const bgColor = isSel ? BG_POPUP_SELECTED : BG_POPUP;
       const baseStyle = KIND_STYLE[item.kind] ?? null;
-      const labelStyle = isSel ? withBg(baseStyle, SELECTED_BG) : baseStyle;
-      const detailStyle = isSel ? withBg(STYLE_DETAIL, SELECTED_BG) : STYLE_DETAIL;
+      const labelStyle = isSel ? withBg(baseStyle, BG_POPUP_SELECTED) : baseStyle;
+      const detailStyle = isSel ? withBg(STYLE_DETAIL, BG_POPUP_SELECTED) : STYLE_DETAIL;
 
       // 行全体をポップアップ背景で塗る
       for (let c = 0; c < this.popupCols; c++) {
