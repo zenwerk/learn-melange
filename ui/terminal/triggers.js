@@ -16,6 +16,7 @@
 const TRIGGER_TABLE = {
   'x.': [
     { label: '⊗', detail: 'circled times' },
+    { label: '☒', detail: 'ballot box with X' },
   ],
 };
 

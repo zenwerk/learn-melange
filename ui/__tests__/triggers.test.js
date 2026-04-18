@@ -2,15 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { findTrigger } from '../terminal/triggers.js';
 
 describe('findTrigger', () => {
-  it('カーソル直前が "x." にマッチする', () => {
+  it('カーソル直前が "x." にマッチし、複数候補を返す', () => {
     const m = findTrigger('x.', 2);
     expect(m).not.toBeNull();
     expect(m.trigger).toBe('x.');
-    expect(m.items.length).toBe(1);
+    expect(m.items.length).toBe(2);
     expect(m.items[0]).toMatchObject({
       label: '⊗',
       kind: 'trigger',
       detail: 'circled times',
+      triggerLen: 2,
+    });
+    expect(m.items[1]).toMatchObject({
+      label: '☒',
+      kind: 'trigger',
+      detail: 'ballot box with X',
       triggerLen: 2,
     });
   });
