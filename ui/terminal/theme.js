@@ -1,12 +1,7 @@
 // @ts-nocheck
 // テーマの単一ソース: CSS カスタムプロパティを読み取り、Canvas2D と WebGL 双方が
-// 使える形へ正規化する。
-//
-// - readTheme(): CSS 変数から DEFAULT_THEME 同形のオブジェクトを返す
-// - themeToVec3(): 任意の CSS 色表現 (hex/hsl/oklch 等) を [r,g,b] (0-1) へ
-// - onThemeChange(): <body> の class 変化を MutationObserver で監視
-//
-// JSDOM では getComputedStyle が空文字を返すため、フォールバック値を常備する。
+// 使える形へ正規化する。JSDOM では getComputedStyle が空文字を返すため、
+// 空値検出時のフォールバックを常備する。
 
 /**
  * @typedef {{
@@ -125,7 +120,6 @@ export function themeToVec3(cssColor) {
   }
   if (!_probeCtx) return [1, 1, 1];
   _probeCtx.clearRect(0, 0, 1, 1);
-  _probeCtx.fillStyle = '#000';
   _probeCtx.fillStyle = cssColor;
   _probeCtx.fillRect(0, 0, 1, 1);
   const d = _probeCtx.getImageData(0, 0, 1, 1).data;
@@ -146,5 +140,3 @@ export function onThemeChange(callback) {
   obs.observe(body, { attributes: true, attributeFilter: ['class'] });
   return () => obs.disconnect();
 }
-
-export const THEME_FALLBACK = FALLBACK;

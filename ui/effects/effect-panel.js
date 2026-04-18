@@ -8,32 +8,36 @@ import { EFFECT_ORDER } from './index.js';
 
 const PANEL_ID = 'effect-panel';
 
-export const THEME_ORDER = ['melange', 'amber', 'green-phosphor'];
+// 既定テーマは body に class を付けない (:root の変数値で表現)。
+export const DEFAULT_THEME_NAME = 'melange';
+export const THEME_ORDER = [DEFAULT_THEME_NAME, 'amber', 'green-phosphor'];
 const THEME_STORAGE_KEY = 'melange-repl:theme';
 
-/** <body> のテーマクラスから現在のテーマ名を読み出す。未設定なら 'melange' */
 export function currentTheme() {
-  if (typeof document === 'undefined' || !document.body) return 'melange';
+  if (typeof document === 'undefined' || !document.body) return DEFAULT_THEME_NAME;
   for (const name of THEME_ORDER) {
-    if (name === 'melange') continue;
+    if (name === DEFAULT_THEME_NAME) continue;
     if (document.body.classList.contains(`theme-${name}`)) return name;
   }
-  return 'melange';
+  return DEFAULT_THEME_NAME;
 }
 
-/** テーマを <body> の class に適用し localStorage に保存する */
+// className を 1 回の代入で置換し、MutationObserver の発火を 1 回に確定させる。
+// HMR や外部ライブラリが付与した theme-* 以外の class は維持する。
 export function applyTheme(name) {
   if (typeof document === 'undefined' || !document.body) return;
-  for (const n of THEME_ORDER) {
-    document.body.classList.remove(`theme-${n}`);
+  const body = document.body;
+  const next = name && name !== DEFAULT_THEME_NAME ? `theme-${name}` : '';
+  let target = '';
+  for (const cls of body.classList) {
+    if (cls.startsWith('theme-')) continue;
+    target = target ? `${target} ${cls}` : cls;
   }
-  if (name && name !== 'melange') {
-    document.body.classList.add(`theme-${name}`);
-  }
+  if (next) target = target ? `${target} ${next}` : next;
+  if (body.className !== target) body.className = target;
   try { localStorage.setItem(THEME_STORAGE_KEY, name); } catch {}
 }
 
-/** 起動時: localStorage からテーマ名を読んで <body> に適用 */
 export function restoreThemeFromStorage() {
   try {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);

@@ -1,8 +1,8 @@
 import { ReplUI } from './repl/repl.js';
 import { restoreThemeFromStorage } from './effects/effect-panel.js';
 
-// EffectManager が初期プロファイルをテーマから解決するより前に、
-// <body> のテーマクラスを localStorage から復元する。
+// EffectManager 構築前にテーマを適用する必要があるため先に呼ぶ
+// (crt-default の fontColor sentinel が現在テーマから解決されるため)。
 restoreThemeFromStorage();
 
 const mount = /** @type {HTMLElement} */ (document.getElementById('terminal-wrap'));

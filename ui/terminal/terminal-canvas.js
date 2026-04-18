@@ -2,30 +2,24 @@
 // Canvas2D に CellBuffer を描画する。
 // 表示はしない (display:none) — WebGL テクスチャ元として使う。
 // セルサイズは measureText + ascent/descent から算出。
-//
 // テーマは CSS カスタムプロパティを単一ソースとする (theme.js 経由)。
-// DEFAULT_THEME は後方互換のため readTheme() のスナップショットを返す。
 
-import { readTheme, THEME_FALLBACK } from './theme.js';
+import { readTheme } from './theme.js';
+import { BG_POPUP, BG_POPUP_SELECTED } from './cell-style-keys.js';
 
-/** 後方互換: 既存のテストやエクスポートからの import を壊さないためのエイリアス */
-export const DEFAULT_THEME = THEME_FALLBACK;
-
-// Cell.style.bg には色名 ('popup_bg' 等) または hex を直接格納するケースがある。
-// 名前付きキーは theme から解決する。
-const resolveBg = (bgKey, theme) => {
-  if (!bgKey) return null;
-  if (bgKey === 'popup_bg') return theme.popup.bg;
-  if (bgKey === 'popup_selected_bg') return theme.popup.selectedBg;
-  if (theme.colors[bgKey]) return theme.colors[bgKey];
-  return bgKey;
+// 名前付きキー (popup_bg 等 / ANSI 名) は theme を経由して解決する。
+// 未知のキーは CSS 色として直接使う (レガシー hex 直指定の受け皿)。
+const resolveColor = (key, fallback, theme) => {
+  if (!key) return fallback;
+  if (key === BG_POPUP) return theme.popup.bg;
+  if (key === BG_POPUP_SELECTED) return theme.popup.selectedBg;
+  return theme.colors[key] ?? key;
 };
 
 const resolveFg = (style, theme) => {
   if (!style) return theme.foreground;
   if (style.dim) return theme.dim;
-  if (style.fg && theme.colors[style.fg]) return theme.colors[style.fg];
-  return theme.foreground;
+  return resolveColor(style.fg, theme.foreground, theme);
 };
 
 export class TerminalCanvas {
@@ -87,7 +81,6 @@ export class TerminalCanvas {
     this.#applySize();
   }
 
-  // テーマ (色) を差し替えて全行を再描画対象にする。
   setTheme(theme) {
     this.theme = theme;
     this.buffer.markAllDirty();
@@ -132,8 +125,7 @@ export class TerminalCanvas {
         if (!cell || cell.ch === null) continue;
 
         // セル個別の背景色 (補完ポップアップ等で使用)
-        const bgKey = cell.style?.bg;
-        const bgColor = resolveBg(bgKey, theme);
+        const bgColor = resolveColor(cell.style?.bg, null, theme);
         if (bgColor) {
           const cellW = cw * (cell.width === 2 ? 2 : 1);
           ctx.fillStyle = bgColor;

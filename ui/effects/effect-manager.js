@@ -14,8 +14,13 @@ import { readTheme, themeToVec3, onThemeChange } from '../terminal/theme.js';
 const STORAGE_KEY = 'melange-repl:effect';
 
 // プロファイルが defaultParams に null を入れると「テーマ値から自動解決」の合図。
-// crt-default の fontColor / bgColor で使用。
-const THEMED_PARAM_KEYS = /** @type {const} */ (['fontColor', 'bgColor']);
+// テーブル形式: キー → theme からソース色を引くアクセサ。
+// 新しいテーマ連動キーを足すときはここだけ拡張する。
+const THEMED_PARAM_SOURCES = {
+  fontColor: (theme) => theme.foreground,
+  bgColor:   (theme) => theme.background,
+};
+const THEMED_PARAM_KEYS = Object.keys(THEMED_PARAM_SOURCES);
 
 export class EffectManager {
   #rafHandle = null;
@@ -38,35 +43,27 @@ export class EffectManager {
     this.#themeUnsub = onThemeChange(() => this.#onThemeChanged());
   }
 
-  // defaultParams の null を theme 値 (vec3) で埋める。プロファイル固有色 (crt-amber
-  // の琥珀色 vec3 等) は null でないため影響しない。
-  #resolveThemedParams(params) {
-    const theme = readTheme();
-    const fg = themeToVec3(theme.foreground);
-    const bg = themeToVec3(theme.background);
+  // defaultParams の null sentinel を theme 値 (vec3) で埋める。
+  // プロファイル固有色 (crt-amber の琥珀色 vec3 等) は null でないため影響しない。
+  #fillThemedSentinels(params, theme) {
     for (const key of THEMED_PARAM_KEYS) {
       if (params[key] === null) {
-        params[key] = key === 'fontColor' ? fg : bg;
+        params[key] = themeToVec3(THEMED_PARAM_SOURCES[key](theme));
       }
     }
     return params;
   }
 
+  // MutationObserver は style 適用前に発火しうるため 1 フレーム待ってから読む。
   #onThemeChanged() {
-    // MutationObserver は style が適用される前に発火しうる。
-    // 1 フレーム待ってから getComputedStyle を叩く。
     requestAnimationFrame(() => {
-      this.terminalCanvas.setTheme(readTheme());
+      const theme = readTheme();
+      this.terminalCanvas.setTheme(theme);
       if (this.currentProfile) {
-        // defaultParams が null のキーだけを再解決する。
-        // 既存の params を破壊しないよう sentinel ロジックを手書き。
         const defaults = this.currentProfile.defaultParams ?? {};
-        const theme = readTheme();
-        const fg = themeToVec3(theme.foreground);
-        const bg = themeToVec3(theme.background);
         for (const key of THEMED_PARAM_KEYS) {
           if (defaults[key] === null) {
-            this.params[key] = key === 'fontColor' ? fg : bg;
+            this.params[key] = themeToVec3(THEMED_PARAM_SOURCES[key](theme));
           }
         }
         this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
@@ -88,7 +85,7 @@ export class EffectManager {
     if (!profile) return false;
     this.currentProfile = profile;
     this.currentName = name;
-    this.params = this.#resolveThemedParams({ ...profile.defaultParams });
+    this.params = this.#fillThemedSentinels({ ...profile.defaultParams }, readTheme());
     this.graph.setPasses(profile.passes(this.params));
     localStorage.setItem(STORAGE_KEY, name);
     this.#updateLoop();
@@ -130,7 +127,10 @@ export class EffectManager {
 
   resetParams() {
     if (!this.currentProfile) return false;
-    this.params = this.#resolveThemedParams({ ...this.currentProfile.defaultParams });
+    this.params = this.#fillThemedSentinels(
+      { ...this.currentProfile.defaultParams },
+      readTheme(),
+    );
     this.graph.updatePassUniforms(this.currentProfile.passes(this.params));
     this.requestRender();
     return true;
