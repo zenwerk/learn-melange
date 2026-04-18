@@ -99,6 +99,14 @@ export class LineEditor {
     return this.promptCol + strWidthRange(this.input, 0, start);
   }
 
+  // trigger (固定長文字列) の開始位置 (buffer 上の列)。
+  // trigger は非識別子を含みうるので prefixStartCol とは別経路。
+  /** @param {number} triggerLen */
+  triggerStartCol(triggerLen) {
+    const start = Math.max(0, this.cursor - triggerLen);
+    return this.promptCol + strWidthRange(this.input, 0, start);
+  }
+
   cursorOffset() {
     return this.cursor;
   }
@@ -207,11 +215,18 @@ export class LineEditor {
   /** @param {CompletionItem | null | undefined} item */
   acceptCompletion(item) {
     if (!item) return;
-    const start = findPrefixStart(this.input, this.cursor);
-    this.input = this.input.slice(0, start) + item.label + this.input.slice(this.cursor);
-    this.cursor = start + item.label.length;
-    this.history.resetCursor(this.input);
-    this.#commit();
+    this.#replaceRange(findPrefixStart(this.input, this.cursor), this.cursor, item.label);
+  }
+
+  // カーソル直前 triggerLen 文字を replacement で置換する (Unicode 変換機構用)。
+  // 識別子境界を無視して固定長を対象にするので acceptCompletion とは別経路。
+  /**
+   * @param {number} triggerLen
+   * @param {string} replacement
+   */
+  acceptTrigger(triggerLen, replacement) {
+    if (triggerLen <= 0 || triggerLen > this.cursor) return;
+    this.#replaceRange(this.cursor - triggerLen, this.cursor, replacement);
   }
 
   /** @param {string} text */
@@ -233,6 +248,18 @@ export class LineEditor {
   #replace(text) {
     this.input = text;
     this.cursor = text.length;
+    this.#commit();
+  }
+
+  /**
+   * @param {number} start
+   * @param {number} end
+   * @param {string} replacement
+   */
+  #replaceRange(start, end, replacement) {
+    this.input = this.input.slice(0, start) + replacement + this.input.slice(end);
+    this.cursor = start + replacement.length;
+    this.history.resetCursor(this.input);
     this.#commit();
   }
 

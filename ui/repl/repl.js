@@ -20,6 +20,7 @@ import { EffectManager } from '../effects/effect-manager.js';
 import { EffectPanel } from '../effects/effect-panel.js';
 import { EFFECTS, EFFECT_ORDER } from '../effects/index.js';
 import { LanguageClient } from '../language/language-client.js';
+import { findTrigger } from '../terminal/triggers.js';
 import { CompletionPopup } from './completion-popup.js';
 
 /**
@@ -62,7 +63,7 @@ export class ReplUI {
       terminalCanvas: this.terminalCanvas,
       history: this.history,
       onSubmit: (line) => this.#handleSubmit(line),
-      onChange: () => this.#handleEditorChange(),
+      onChange: (input, cursor) => this.#handleEditorChange(input, cursor),
     });
 
     // onRawKey は戻り値 (bool) を返すため withRender は内部で呼ぶ。
@@ -248,7 +249,11 @@ export class ReplUI {
       const item = this.completionPopup.currentItem();
       this.completionPopup.hide();
       if (item) {
-        this.editor.acceptCompletion(item);
+        if (item.kind === 'trigger') {
+          this.editor.acceptTrigger(item.triggerLen, item.label);
+        } else {
+          this.editor.acceptCompletion(item);
+        }
       }
       return;
     }
@@ -274,7 +279,20 @@ export class ReplUI {
     }
   }
 
-  #handleEditorChange() {
+  /**
+   * @param {string} input
+   * @param {number} cursor
+   */
+  #handleEditorChange(input, cursor) {
+    const match = findTrigger(input, cursor);
+    if (match) {
+      const row = this.editor.row + 1;
+      const col = this.editor.triggerStartCol(match.trigger.length);
+      this.completionPopup.show(match.items, row, col);
+      return;
+    }
+    // trigger に当たらない編集が入ったら開いている popup は閉じる
+    // (Tab 補完由来でも trigger 由来でも同様。Tab は再度 Tab 押下で開き直す)。
     if (this.completionPopup.isVisible()) {
       this.completionPopup.hide();
     }

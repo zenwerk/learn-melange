@@ -23,6 +23,7 @@ const COMPLETION_STYLE = {
   variable: { fg: 'yellow' },
   keyword:  { fg: 'magenta' },
   operator: { fg: 'cyan' },
+  trigger:  { fg: 'green', bold: true },
 };
 
 /** @type {LanguageProfile} */

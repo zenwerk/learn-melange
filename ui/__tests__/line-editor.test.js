@@ -137,6 +137,44 @@ describe('LineEditor word motion', () => {
   });
 });
 
+describe('LineEditor.acceptTrigger', () => {
+  it('カーソル直前 triggerLen 文字を replacement で置換する', () => {
+    const { ed } = makeEditor();
+    ed.begin('> ', 0);
+    ed.insert('x.');
+    ed.acceptTrigger(2, '⊗');
+    expect(ed.value()).toBe('⊗');
+    expect(ed.cursorOffset()).toBe('⊗'.length);
+  });
+
+  it('カーソル前後の文字を保ちつつ直前だけ置換する', () => {
+    const { ed } = makeEditor();
+    ed.begin('> ', 0);
+    ed.insert('foo x. bar');
+    ed.moveLeft(); ed.moveLeft(); ed.moveLeft(); ed.moveLeft(); // cursor after 'x.'
+    ed.acceptTrigger(2, '⊗');
+    expect(ed.value()).toBe('foo ⊗ bar');
+  });
+
+  it('triggerLen が cursor を超えるときは no-op', () => {
+    const { ed } = makeEditor();
+    ed.begin('> ', 0);
+    ed.insert('x');
+    ed.acceptTrigger(2, '⊗');
+    expect(ed.value()).toBe('x');
+  });
+
+  it('triggerLen <= 0 は no-op', () => {
+    const { ed } = makeEditor();
+    ed.begin('> ', 0);
+    ed.insert('x.');
+    ed.acceptTrigger(0, '⊗');
+    expect(ed.value()).toBe('x.');
+    ed.acceptTrigger(-1, '⊗');
+    expect(ed.value()).toBe('x.');
+  });
+});
+
 describe('LineEditor cursor edges', () => {
   it('moveLeft stops at 0', () => {
     const { ed } = makeEditor();

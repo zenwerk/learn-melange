@@ -35,13 +35,26 @@ export interface EvalResultObj {
   error_column: number | null;
 }
 
-export type CompletionKind = 'keyword' | 'variable' | 'operator' | 'function' | (string & {});
+// 言語サービス由来の kind。OCaml 側 Js_bridge の completion_kind_to_string と同期。
+export type LanguageCompletionKind = 'keyword' | 'variable' | 'operator' | 'function';
 
-export interface CompletionItem {
+// エディタ層の trigger と区別するための discriminated union 用キー。
+export type CompletionKind = LanguageCompletionKind | 'trigger';
+
+export interface LanguageCompletion {
   label: string;
-  kind: CompletionKind;
+  kind: LanguageCompletionKind;
   detail: string | null;
 }
+
+export interface TriggerCompletion {
+  label: string;
+  kind: 'trigger';
+  detail: string | null;
+  triggerLen: number;
+}
+
+export type CompletionItem = LanguageCompletion | TriggerCompletion;
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info' | (string & {});
 

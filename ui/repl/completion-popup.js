@@ -32,7 +32,7 @@ export class CompletionPopup {
     this.buffer = buffer;
     this.completionStyleFor = completionStyleFor;
 
-    /** @type {CompletionItem[]} */
+    /** @type {readonly CompletionItem[]} */
     this.items = [];
     this.selection = 0;
     this.visible = false;
@@ -66,13 +66,25 @@ export class CompletionPopup {
   }
 
   /**
-   * @param {CompletionItem[]} items
+   * @param {readonly CompletionItem[]} items
    * @param {number} anchorRow
    * @param {number} anchorCol
    */
   show(items, anchorRow, anchorCol) {
     if (!items || items.length === 0) {
       this.hide();
+      return;
+    }
+
+    // 同一 items 参照・同一アンカーでの再 show は no-op。
+    // trigger popup は毎キーストロークで show() が呼ばれうるが、表示状態が
+    // 変わらないなら再描画と save/restore の往復を避ける。
+    if (
+      this.visible &&
+      this.items === items &&
+      this.anchorRow === anchorRow &&
+      this.anchorCol === anchorCol
+    ) {
       return;
     }
 
