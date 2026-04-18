@@ -22,6 +22,26 @@ const resolveFg = (style, theme) => {
   return resolveColor(style.fg, theme.foreground, theme);
 };
 
+// 特定グリフはモノスペースフォントで明らかに小さく/潰れて見えるため、
+// 描画時だけフォントサイズを倍率で拡大する。セル幅・高さは変えない
+// (入力時の East Asian Width 推定と整合させる)。
+// 範囲は [lo, hi] の閉区間。現状 '⊗' (U+2297) と '☒' (U+2612) のみ。
+// 将来的に数学記号全般 (U+2200-U+22FF) など広い範囲を足すことも可。
+const MAGNIFIED_RANGES = [
+  [0x2297, 0x2297], // ⊗ circled times
+  [0x2612, 0x2612], // ☒ ballot box with X
+];
+const MAGNIFY_FACTOR = 1.3;
+
+const shouldMagnify = (ch) => {
+  if (!ch) return false;
+  const cp = ch.codePointAt(0);
+  for (const [lo, hi] of MAGNIFIED_RANGES) {
+    if (cp >= lo && cp <= hi) return true;
+  }
+  return false;
+};
+
 export class TerminalCanvas {
   constructor({
     buffer,
@@ -120,6 +140,8 @@ export class TerminalCanvas {
       ctx.fillRect(0, r * ch - 1, buffer.cols * cw, ch + 2);
 
       const row = buffer.grid[r];
+      // Pass1: 通常セル。拡大セルはスキップし Pass2 に回す
+      // (拡大グリフの左右はみ出し分を通常セル描画で消さないため)。
       for (let c = 0; c < buffer.cols; c++) {
         const cell = row[c];
         if (!cell || cell.ch === null) continue;
@@ -133,14 +155,30 @@ export class TerminalCanvas {
         }
 
         if (cell.ch === ' ') continue;
+        if (shouldMagnify(cell.ch)) continue;
+
         ctx.fillStyle = resolveFg(cell.style, theme);
-        // セル矩形に clip してグリフの上下はみ出しを切り落とす
         ctx.save();
         ctx.beginPath();
         const cellW = cw * (cell.width === 2 ? 2 : 1);
         ctx.rect(c * cw, r * ch, cellW, ch);
         ctx.clip();
-        ctx.fillText(cell.ch, c * cw, r * ch + ascent);
+        this.#drawGlyph(cell.ch, c * cw, r * ch, cellW);
+        ctx.restore();
+      }
+      // Pass2: 拡大セル。左右に padX 余白を取った広い clip で描画し、
+      // 隣セルの端にわずかに被せる (後描きなので上書きされる側が拡大グリフ)。
+      for (let c = 0; c < buffer.cols; c++) {
+        const cell = row[c];
+        if (!cell || cell.ch === null || !shouldMagnify(cell.ch)) continue;
+        const cellW = cw * (cell.width === 2 ? 2 : 1);
+        const padX = Math.ceil(cw * (MAGNIFY_FACTOR - 1) / 2);
+        ctx.fillStyle = resolveFg(cell.style, theme);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(c * cw - padX, r * ch, cellW + padX * 2, ch);
+        ctx.clip();
+        this.#drawGlyph(cell.ch, c * cw, r * ch, cellW);
         ctx.restore();
       }
     }
@@ -154,16 +192,37 @@ export class TerminalCanvas {
         ctx.fillStyle = theme.cursor;
         ctx.fillRect(col * cw, row * ch, cw * width, ch);
         if (cell && cell.ch && cell.ch !== ' ' && cell.ch !== null) {
+          const padX = shouldMagnify(cell.ch)
+            ? Math.ceil(cw * (MAGNIFY_FACTOR - 1) / 2) : 0;
           ctx.fillStyle = theme.background;
           ctx.save();
           ctx.beginPath();
-          ctx.rect(col * cw, row * ch, cw * width, ch);
+          ctx.rect(col * cw - padX, row * ch, cw * width + padX * 2, ch);
           ctx.clip();
-          ctx.fillText(cell.ch, col * cw, row * ch + ascent);
+          this.#drawGlyph(cell.ch, col * cw, row * ch, cw * width);
           ctx.restore();
         }
       }
     }
+  }
+
+  // セル (x, y, cellW) にグリフを描く。対象文字は MAGNIFY_FACTOR で拡大し、
+  // セル中心に揃える。それ以外は通常フォントで ascent ベースラインに揃える。
+  // fillStyle は呼び出し側で設定済みである前提。
+  #drawGlyph(ch, x, y, cellW) {
+    const { ctx, cellHeight: ch_, ascent, fontSize, fontFamily } = this;
+    if (shouldMagnify(ch)) {
+      const bigSize = fontSize * MAGNIFY_FACTOR;
+      ctx.font = `${bigSize}px ${fontFamily}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch, x + cellW / 2, y + ch_ / 2);
+      ctx.font = `${fontSize}px ${fontFamily}`;
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+      return;
+    }
+    ctx.fillText(ch, x, y + ascent);
   }
 
   // 親要素のピクセルサイズから rows/cols を計算 (FitAddon 相当)
