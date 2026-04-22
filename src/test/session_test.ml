@@ -38,6 +38,16 @@ let test_decimal () = expect_expr ~input:"0.5+0.25" 0.75
 let test_assignment () = expect_binding ~input:"x = 42" "x" 42.0
 let test_assignment_expr () = expect_binding ~input:"y = 1+2*3" "y" 7.0
 
+(* 日本語識別子と記号識別子 (⊗) が UTF-8 のまま束縛名として通ることを確認。 *)
+let test_assignment_unicode_jp () = expect_binding ~input:"あ = 1" "あ" 1.0
+let test_assignment_unicode_sym () = expect_binding ~input:"⊗ = 2" "⊗" 2.0
+let test_unicode_var_lookup () =
+  let (s1, _) = S.eval S.empty "あ = 3" in
+  let (_, r) = S.eval s1 "あ + 1" in
+  match r with
+  | S.Expr v -> Alcotest.check float_t "あ+1" 4.0 v
+  | _ -> Alcotest.fail "unicode var lookup failed"
+
 let test_empty_input () = expect_error ~input:""
 let test_syntax_error () = expect_error ~input:"1 +"
 let test_unknown_var () = expect_error ~input:"foo + 1"
@@ -67,6 +77,9 @@ let tests = [
   "expr: decimal", `Quick, test_decimal;
   "binding: simple", `Quick, test_assignment;
   "binding: expression rhs", `Quick, test_assignment_expr;
+  "binding: unicode japanese name", `Quick, test_assignment_unicode_jp;
+  "binding: unicode symbol name", `Quick, test_assignment_unicode_sym;
+  "unicode var lookup", `Quick, test_unicode_var_lookup;
   "error: empty input", `Quick, test_empty_input;
   "error: syntax error", `Quick, test_syntax_error;
   "error: unknown variable", `Quick, test_unknown_var;
